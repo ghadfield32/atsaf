@@ -44,6 +44,12 @@ Outputs:
 GitHub Actions:
 - Set repo secret `EIA_API_KEY` (Actions does not read `.env`)
 - Workflow at `.github/workflows/renewable_hourly.yml` runs hourly and commits updated artifacts
+- Verify updates in Actions run history and the `run_log.json` summary (validation must be OK and lag hours within threshold)
+
+Pre-commit:
+- `pip install pre-commit`
+- `pre-commit install`
+- Optional: `pre-commit run --all-files`
 
 
 ### Roadmap

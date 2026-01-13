@@ -40,6 +40,13 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Check EIA API key
+        run: |
+          if [ -z "$EIA_API_KEY" ]; then
+            echo "EIA_API_KEY is not set. Add it to repo secrets." >&2
+            exit 1
+          fi
+
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
@@ -48,6 +55,31 @@ jobs:
       - name: Run hourly pipeline
         run: |
           python -m src.renewable.jobs.run_hourly
+
+      - name: Summarize run
+        if: always()
+        run: |
+          if [ -f data/renewable/run_log.json ]; then
+            python - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+            import json
+            from pathlib import Path
+
+            data = json.loads(Path("data/renewable/run_log.json").read_text())
+            validation = data.get("validation", {})
+            details = validation.get("details", {})
+
+            lines = [
+                "### Renewable hourly run",
+                f"- run_at_utc: {data.get('run_at_utc')}",
+                f"- validation_ok: {validation.get('ok')}",
+                f"- message: {validation.get('message')}",
+                f"- max_ds: {details.get('max_ds')}",
+                f"- lag_hours: {details.get('lag_hours')}",
+            ]
+            print("\n".join(lines))
+            PY
+          else
+            echo "No run_log.json found." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Commit updated artifacts
         run: |

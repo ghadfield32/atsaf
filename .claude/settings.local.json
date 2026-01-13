@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(python:*)",
+      "Bash(cat:*)",
+      "Bash(tree:*)",
+      "Bash(wc:*)",
+      "Bash(find:*)",
+      "Bash(uv run python:*)",
+      "Bash(ls:*)",
+      "Bash(du:*)",
+      "Bash(del \"c:\\\\docker_projects\\\\atsaf\\\\chapters\\\\renewable_energry_forecasting.ipynb\")"
+    ]
+  }
+}

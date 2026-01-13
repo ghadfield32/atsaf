@@ -1,0 +1,485 @@
+{
+  "timestamp": "2026-01-08T10:23:53.641355",
+  "pipeline": "chapter2",
+  "best_model": {
+    "model_name": "arima",
+    "rmse_mean": 42520.64157173182,
+    "mae_mean": 34868.06888627414,
+    "mape_mean": 21.602460508096865,
+    "mase_mean": 3.180992650648096,
+    "primary_metric": "rmse",
+    "primary_metric_mean": 42520.64157173182,
+    "total_splits": 1080,
+    "ranking": "              model_name  valid_count  ...       mape      mase\n0                  arima         1080  ...  21.602461  3.180993\n1  exponential_smoothing         1080  ...  51.157034  6.849683\n2                prophet         1080  ...  51.553985  6.889291\n3                xgboost         1080  ...  51.553985  6.889291\n\n[4 rows x 6 columns]",
+    "baseline_comparison": {
+      "baseline_rmse": 66529.55599625062,
+      "improvement_pct": 36.08759154483439
+    }
+  },
+  "backtesting": {
+    "strategy": "rolling",
+    "total_splits": 45,
+    "series_count": 5,
+    "validation": {
+      "COL": true,
+      "NG": true,
+      "NUC": true,
+      "WAT": true,
+      "WND": true
+    },
+    "splits_info": {
+      "COL": {
+        "strategy": "rolling",
+        "n_splits": 9,
+        "splits": [
+          {
+            "split_id": 0,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2025-12-29T03:00:00",
+            "test_start": "2025-12-29T04:00:00",
+            "test_end": "2025-12-30T03:00:00",
+            "train_size": 100,
+            "test_size": 24
+          },
+          {
+            "split_id": 1,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2025-12-30T03:00:00",
+            "test_start": "2025-12-30T04:00:00",
+            "test_end": "2025-12-31T03:00:00",
+            "train_size": 124,
+            "test_size": 24
+          },
+          {
+            "split_id": 2,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2025-12-31T03:00:00",
+            "test_start": "2025-12-31T04:00:00",
+            "test_end": "2026-01-01T03:00:00",
+            "train_size": 148,
+            "test_size": 24
+          },
+          {
+            "split_id": 3,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-01T03:00:00",
+            "test_start": "2026-01-01T04:00:00",
+            "test_end": "2026-01-02T03:00:00",
+            "train_size": 172,
+            "test_size": 24
+          },
+          {
+            "split_id": 4,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-02T03:00:00",
+            "test_start": "2026-01-02T04:00:00",
+            "test_end": "2026-01-03T03:00:00",
+            "train_size": 196,
+            "test_size": 24
+          },
+          {
+            "split_id": 5,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-03T03:00:00",
+            "test_start": "2026-01-03T04:00:00",
+            "test_end": "2026-01-04T03:00:00",
+            "train_size": 220,
+            "test_size": 24
+          },
+          {
+            "split_id": 6,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-04T03:00:00",
+            "test_start": "2026-01-04T04:00:00",
+            "test_end": "2026-01-05T03:00:00",
+            "train_size": 244,
+            "test_size": 24
+          },
+          {
+            "split_id": 7,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-05T03:00:00",
+            "test_start": "2026-01-05T04:00:00",
+            "test_end": "2026-01-06T03:00:00",
+            "train_size": 268,
+            "test_size": 24
+          },
+          {
+            "split_id": 8,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-06T03:00:00",
+            "test_start": "2026-01-06T04:00:00",
+            "test_end": "2026-01-07T03:00:00",
+            "train_size": 292,
+            "test_size": 24
+          }
+        ]
+      },
+      "NG": {
+        "strategy": "rolling",
+        "n_splits": 9,
+        "splits": [
+          {
+            "split_id": 0,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2025-12-29T03:00:00",
+            "test_start": "2025-12-29T04:00:00",
+            "test_end": "2025-12-30T03:00:00",
+            "train_size": 100,
+            "test_size": 24
+          },
+          {
+            "split_id": 1,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2025-12-30T03:00:00",
+            "test_start": "2025-12-30T04:00:00",
+            "test_end": "2025-12-31T03:00:00",
+            "train_size": 124,
+            "test_size": 24
+          },
+          {
+            "split_id": 2,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2025-12-31T03:00:00",
+            "test_start": "2025-12-31T04:00:00",
+            "test_end": "2026-01-01T03:00:00",
+            "train_size": 148,
+            "test_size": 24
+          },
+          {
+            "split_id": 3,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-01T03:00:00",
+            "test_start": "2026-01-01T04:00:00",
+            "test_end": "2026-01-02T03:00:00",
+            "train_size": 172,
+            "test_size": 24
+          },
+          {
+            "split_id": 4,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-02T03:00:00",
+            "test_start": "2026-01-02T04:00:00",
+            "test_end": "2026-01-03T03:00:00",
+            "train_size": 196,
+            "test_size": 24
+          },
+          {
+            "split_id": 5,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-03T03:00:00",
+            "test_start": "2026-01-03T04:00:00",
+            "test_end": "2026-01-04T03:00:00",
+            "train_size": 220,
+            "test_size": 24
+          },
+          {
+            "split_id": 6,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-04T03:00:00",
+            "test_start": "2026-01-04T04:00:00",
+            "test_end": "2026-01-05T03:00:00",
+            "train_size": 244,
+            "test_size": 24
+          },
+          {
+            "split_id": 7,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-05T03:00:00",
+            "test_start": "2026-01-05T04:00:00",
+            "test_end": "2026-01-06T03:00:00",
+            "train_size": 268,
+            "test_size": 24
+          },
+          {
+            "split_id": 8,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-06T03:00:00",
+            "test_start": "2026-01-06T04:00:00",
+            "test_end": "2026-01-07T03:00:00",
+            "train_size": 292,
+            "test_size": 24
+          }
+        ]
+      },
+      "NUC": {
+        "strategy": "rolling",
+        "n_splits": 9,
+        "splits": [
+          {
+            "split_id": 0,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2025-12-29T03:00:00",
+            "test_start": "2025-12-29T04:00:00",
+            "test_end": "2025-12-30T03:00:00",
+            "train_size": 100,
+            "test_size": 24
+          },
+          {
+            "split_id": 1,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2025-12-30T03:00:00",
+            "test_start": "2025-12-30T04:00:00",
+            "test_end": "2025-12-31T03:00:00",
+            "train_size": 124,
+            "test_size": 24
+          },
+          {
+            "split_id": 2,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2025-12-31T03:00:00",
+            "test_start": "2025-12-31T04:00:00",
+            "test_end": "2026-01-01T03:00:00",
+            "train_size": 148,
+            "test_size": 24
+          },
+          {
+            "split_id": 3,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-01T03:00:00",
+            "test_start": "2026-01-01T04:00:00",
+            "test_end": "2026-01-02T03:00:00",
+            "train_size": 172,
+            "test_size": 24
+          },
+          {
+            "split_id": 4,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-02T03:00:00",
+            "test_start": "2026-01-02T04:00:00",
+            "test_end": "2026-01-03T03:00:00",
+            "train_size": 196,
+            "test_size": 24
+          },
+          {
+            "split_id": 5,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-03T03:00:00",
+            "test_start": "2026-01-03T04:00:00",
+            "test_end": "2026-01-04T03:00:00",
+            "train_size": 220,
+            "test_size": 24
+          },
+          {
+            "split_id": 6,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-04T03:00:00",
+            "test_start": "2026-01-04T04:00:00",
+            "test_end": "2026-01-05T03:00:00",
+            "train_size": 244,
+            "test_size": 24
+          },
+          {
+            "split_id": 7,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-05T03:00:00",
+            "test_start": "2026-01-05T04:00:00",
+            "test_end": "2026-01-06T03:00:00",
+            "train_size": 268,
+            "test_size": 24
+          },
+          {
+            "split_id": 8,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-06T03:00:00",
+            "test_start": "2026-01-06T04:00:00",
+            "test_end": "2026-01-07T03:00:00",
+            "train_size": 292,
+            "test_size": 24
+          }
+        ]
+      },
+      "WAT": {
+        "strategy": "rolling",
+        "n_splits": 9,
+        "splits": [
+          {
+            "split_id": 0,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2025-12-29T03:00:00",
+            "test_start": "2025-12-29T04:00:00",
+            "test_end": "2025-12-30T03:00:00",
+            "train_size": 100,
+            "test_size": 24
+          },
+          {
+            "split_id": 1,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2025-12-30T03:00:00",
+            "test_start": "2025-12-30T04:00:00",
+            "test_end": "2025-12-31T03:00:00",
+            "train_size": 124,
+            "test_size": 24
+          },
+          {
+            "split_id": 2,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2025-12-31T03:00:00",
+            "test_start": "2025-12-31T04:00:00",
+            "test_end": "2026-01-01T03:00:00",
+            "train_size": 148,
+            "test_size": 24
+          },
+          {
+            "split_id": 3,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-01T03:00:00",
+            "test_start": "2026-01-01T04:00:00",
+            "test_end": "2026-01-02T03:00:00",
+            "train_size": 172,
+            "test_size": 24
+          },
+          {
+            "split_id": 4,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-02T03:00:00",
+            "test_start": "2026-01-02T04:00:00",
+            "test_end": "2026-01-03T03:00:00",
+            "train_size": 196,
+            "test_size": 24
+          },
+          {
+            "split_id": 5,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-03T03:00:00",
+            "test_start": "2026-01-03T04:00:00",
+            "test_end": "2026-01-04T03:00:00",
+            "train_size": 220,
+            "test_size": 24
+          },
+          {
+            "split_id": 6,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-04T03:00:00",
+            "test_start": "2026-01-04T04:00:00",
+            "test_end": "2026-01-05T03:00:00",
+            "train_size": 244,
+            "test_size": 24
+          },
+          {
+            "split_id": 7,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-05T03:00:00",
+            "test_start": "2026-01-05T04:00:00",
+            "test_end": "2026-01-06T03:00:00",
+            "train_size": 268,
+            "test_size": 24
+          },
+          {
+            "split_id": 8,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-06T03:00:00",
+            "test_start": "2026-01-06T04:00:00",
+            "test_end": "2026-01-07T03:00:00",
+            "train_size": 292,
+            "test_size": 24
+          }
+        ]
+      },
+      "WND": {
+        "strategy": "rolling",
+        "n_splits": 9,
+        "splits": [
+          {
+            "split_id": 0,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2025-12-29T03:00:00",
+            "test_start": "2025-12-29T04:00:00",
+            "test_end": "2025-12-30T03:00:00",
+            "train_size": 100,
+            "test_size": 24
+          },
+          {
+            "split_id": 1,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2025-12-30T03:00:00",
+            "test_start": "2025-12-30T04:00:00",
+            "test_end": "2025-12-31T03:00:00",
+            "train_size": 124,
+            "test_size": 24
+          },
+          {
+            "split_id": 2,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2025-12-31T03:00:00",
+            "test_start": "2025-12-31T04:00:00",
+            "test_end": "2026-01-01T03:00:00",
+            "train_size": 148,
+            "test_size": 24
+          },
+          {
+            "split_id": 3,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-01T03:00:00",
+            "test_start": "2026-01-01T04:00:00",
+            "test_end": "2026-01-02T03:00:00",
+            "train_size": 172,
+            "test_size": 24
+          },
+          {
+            "split_id": 4,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-02T03:00:00",
+            "test_start": "2026-01-02T04:00:00",
+            "test_end": "2026-01-03T03:00:00",
+            "train_size": 196,
+            "test_size": 24
+          },
+          {
+            "split_id": 5,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-03T03:00:00",
+            "test_start": "2026-01-03T04:00:00",
+            "test_end": "2026-01-04T03:00:00",
+            "train_size": 220,
+            "test_size": 24
+          },
+          {
+            "split_id": 6,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-04T03:00:00",
+            "test_start": "2026-01-04T04:00:00",
+            "test_end": "2026-01-05T03:00:00",
+            "train_size": 244,
+            "test_size": 24
+          },
+          {
+            "split_id": 7,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-05T03:00:00",
+            "test_start": "2026-01-05T04:00:00",
+            "test_end": "2026-01-06T03:00:00",
+            "train_size": 268,
+            "test_size": 24
+          },
+          {
+            "split_id": 8,
+            "train_start": "2025-12-25T00:00:00",
+            "train_end": "2026-01-06T03:00:00",
+            "test_start": "2026-01-06T04:00:00",
+            "test_end": "2026-01-07T03:00:00",
+            "train_size": 292,
+            "test_size": 24
+          }
+        ]
+      }
+    }
+  },
+  "results_summary": {
+    "total_results": 180,
+    "models": [
+      "exponential_smoothing",
+      "arima",
+      "prophet",
+      "xgboost"
+    ],
+    "series": [
+      "COL",
+      "NG",
+      "NUC",
+      "WAT",
+      "WND"
+    ],
+    "avg_results_per_model": 45.0
+  }
+}

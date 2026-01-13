@@ -1,0 +1,11 @@
+{
+  "pull_timestamp": "2026-01-08T19:05:31.701421",
+  "respondent": "US48",
+  "fueltype": "NG",
+  "start_date": "2024-01-01",
+  "end_date": "2024-12-31",
+  "raw_rows": 8761,
+  "clean_rows": 8761,
+  "missing_hours": 0,
+  "validation_passed": true
+}

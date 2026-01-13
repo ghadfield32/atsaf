@@ -1,0 +1,4 @@
+mlflow==3.8.1
+pandas
+numpy
+statsforecast

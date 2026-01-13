@@ -27,6 +27,24 @@ Here is the current repository folder structure:
 - The `docker` folder provides the build files for the book Docker image
 - The `docs` folder hosts the book website files
 
+### Renewable hourly pipeline (EIA + weather)
+This repo includes an hourly renewable forecasting pipeline that fetches EIA data, validates it, retrains, and writes the latest artifacts for Streamlit.
+
+Local setup:
+- Copy `.env.template` (or `.env.example`) to `.env`
+- Set `EIA_API_KEY=<your_key>`
+- Run `python -m src.renewable.jobs.run_hourly`
+
+Outputs:
+- `data/renewable/generation.parquet`
+- `data/renewable/weather.parquet`
+- `data/renewable/forecasts.parquet`
+- `data/renewable/run_log.json`
+
+GitHub Actions:
+- Set repo secret `EIA_API_KEY` (Actions does not read `.env`)
+- Workflow at `.github/workflows/renewable_hourly.yml` runs hourly and commits updated artifacts
+
 
 ### Roadmap
 Below is the book roadmap:
@@ -50,6 +68,7 @@ While it is not required, the book is built with Docker to ensure a high level o
 - [ ] The timetk Class (V1)
 - [ ] The tsibble Class (V1)
 - [ ] Working with APIs (V2)
+- [ ] Data Prep & Quality for Time Series (V1/V2)
 - [ ] Plotting Time Series Objects (V1)
 - [ ] Seasonal Analysis (V1)
 - [ ] Correlation Analysis (V1)
@@ -57,10 +76,12 @@ While it is not required, the book is built with Docker to ensure a high level o
 - [ ] Smoothing Methods (V1)
 - [ ] Time Series Decomposition (V1)
 - [ ] Forecasting Strategies (V2)
+- [ ] Backtesting & Evaluation (V2)
 - [ ] Forecasting with Smoothing Models (V2)
 - [ ] Time Series Properties (V2)
 - [ ] Forecasting with ARIMA Models (V2)
 - [ ] Forecasting with Linear Regression Model (V2)
+- [ ] Exogenous/Interventions + Probabilistic Forecasting (V3)
 - [ ] Forecasting with GLM Model (V3)
 - [ ] Forecasting with GAM Model (V3)
 - [ ] Forecasting with Bayesian Methods (V4)

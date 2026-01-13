@@ -1,3 +1,0 @@
-# Plotting Time Series Objects
-
-Plotting Time Series Objects chapter - placeholder.

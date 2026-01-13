@@ -1,3 +1,0 @@
-# The tsibble Class
-
-The tsibble Class chapter - placeholder.

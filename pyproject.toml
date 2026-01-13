@@ -1,0 +1,135 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "atsaf"
+version = "0.1.0"
+description = "Applied Time Series Analysis and Forecasting - Learning with real EIA data"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Time Series Learner", email = "learner@example.com"}
+]
+keywords = ["time-series", "forecasting", "analysis", "eia", "electricity"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Education",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.8"
+
+dependencies = [
+    # Data fetching and processing
+    "requests>=2.28.0",           # HTTP requests for API calls
+    "pandas>=1.5.0",              # Data manipulation and analysis
+    "numpy>=1.24.0",              # Numerical computing
+    "duckdb>=0.8.0",              # Fast SQL queries on data
+    "python-dotenv>=1.0.0",       # Load environment variables from .env file
+    
+    # Time series forecasting
+    "statsforecast>=1.5.0",       # Statistical forecasting methods
+    "mlforecast>=0.10.0",         # ML-based forecasting
+    "nixtla>=0.0.1",              # Nixtla ecosystem utilities
+    
+    # Statistical analysis and modeling
+    "statsmodels>=0.14.0",        # Statistical modeling and tests
+    "scipy>=1.10.0",              # Scientific computing
+    "scikit-learn>=1.2.0",        # Machine learning and preprocessing
+    
+    # Visualization
+    "matplotlib>=3.7.0",          # Static plotting
+    "seaborn>=0.12.0",            # Statistical data visualization
+    "plotly>=5.0.0",              # Interactive web-based visualization
+    
+    # MLOps and workflow
+    "mlflow>=2.0.0",              # Experiment tracking and model registry
+    "apache-airflow>=2.5.0",      # Workflow orchestration
+
+    # CLI and monitoring (Chapter 3-4)
+    "typer>=0.9.0",               # CLI framework
+    "rich>=13.0.0",               # Pretty CLI output
+    "evidently>=0.4.0",           # Drift detection and monitoring
+    "streamlit>=1.30.0",          # Dashboard UI
+    "pydantic-settings>=2.0.0",   # Type-safe configuration
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.3.0",              # Testing framework
+    "pytest-cov>=4.1.0",          # Coverage reporting
+    "black>=23.3.0",              # Code formatter
+    "ruff>=0.0.270",              # Fast Python linter
+    "mypy>=1.0.0",                # Static type checker
+]
+
+jupyter = [
+    "jupyter>=1.0.0",             # Jupyter notebook
+    "jupyterlab>=4.0.0",          # JupyterLab
+    "ipywidgets>=8.0.0",          # Interactive widgets
+]
+
+[project.urls]
+Homepage = "https://github.com/RamiKrispin/atsaf"
+Documentation = "https://github.com/RamiKrispin/atsaf"
+Repository = "https://github.com/RamiKrispin/atsaf.git"
+Issues = "https://github.com/RamiKrispin/atsaf/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["eia_data.py"]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # Pyflakes
+    "I",    # isort
+    "C",    # flake8-comprehensions
+    "B",    # flake8-bugbear
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+    "W503",  # line break before binary operator
+]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov=. --cov-report=html --cov-report=term"

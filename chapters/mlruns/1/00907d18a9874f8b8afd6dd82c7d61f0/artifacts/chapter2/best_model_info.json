@@ -1,0 +1,15 @@
+{
+  "model_name": "arima",
+  "rmse_mean": 42520.64157173182,
+  "mae_mean": 34868.06888627414,
+  "mape_mean": 21.602460508096865,
+  "mase_mean": 3.180992650648096,
+  "primary_metric": "rmse",
+  "primary_metric_mean": 42520.64157173182,
+  "total_splits": 1080,
+  "ranking": "              model_name  valid_count  ...       mape      mase\n0                  arima         1080  ...  21.602461  3.180993\n1  exponential_smoothing         1080  ...  51.157034  6.849683\n2                prophet         1080  ...  51.553985  6.889291\n3                xgboost         1080  ...  51.553985  6.889291\n\n[4 rows x 6 columns]",
+  "baseline_comparison": {
+    "baseline_rmse": 66529.55599625062,
+    "improvement_pct": 36.08759154483439
+  }
+}

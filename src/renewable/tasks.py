@@ -91,9 +91,48 @@ def fetch_renewable_data(
     output_path = config.generation_path()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    def _log_generation_summary(df: pd.DataFrame, source: str) -> None:
+        _log_series_summary(df, value_col="y", label=f"generation_data_{source}")
+
+        expected_series = {
+            f"{region}_{fuel}" for region in config.regions for fuel in config.fuel_types
+        }
+        present_series = set(df["unique_id"]) if "unique_id" in df.columns else set()
+        missing_series = sorted(expected_series - present_series)
+        if missing_series:
+            logger.warning(
+                "[fetch_generation] Missing expected series (%s): %s",
+                source,
+                missing_series,
+            )
+
+        if df.empty:
+            logger.warning("[fetch_generation] No generation data rows (%s).", source)
+            return
+
+        coverage = (
+            df.groupby("unique_id")["ds"]
+            .agg(min_ds="min", max_ds="max", rows="count")
+            .reset_index()
+            .sort_values("unique_id")
+        )
+        max_series_log = 25
+        if len(coverage) > max_series_log:
+            logger.info(
+                "[fetch_generation] Coverage (%s, first %s series):\n%s",
+                source,
+                max_series_log,
+                coverage.head(max_series_log).to_string(index=False),
+            )
+        else:
+            logger.info("[fetch_generation] Coverage (%s):\n%s", source, coverage.to_string(index=False))
+
     if output_path.exists() and not config.overwrite:
         logger.info(f"[fetch_generation] exists, loading: {output_path}")
-        return pd.read_parquet(output_path)
+        cached = pd.read_parquet(output_path)
+        # Log cached coverage to surface missing series without refetching.
+        _log_generation_summary(cached, source="cache")
+        return cached
 
     logger.info(f"[fetch_generation] Fetching {config.fuel_types} for {config.regions}")
 
@@ -113,47 +152,23 @@ def fetch_renewable_data(
     combined = pd.concat(all_dfs, ignore_index=True)
     combined = combined.sort_values(["unique_id", "ds"]).reset_index(drop=True)
 
-    _log_series_summary(combined, value_col="y", label="generation_data")
+    # Log fresh coverage to highlight gaps or unexpected negatives.
+    _log_generation_summary(combined, source="fresh")
 
-    expected_series = {
-        f"{region}_{fuel}" for region in config.regions for fuel in config.fuel_types
-    }
-    present_series = set(combined["unique_id"])
-    missing_series = sorted(expected_series - present_series)
-    if missing_series:
-        logger.warning(
-            f"[fetch_generation] Missing expected series after fetch: {missing_series}"
-        )
-        if fetch_diagnostics:
-            empty_series = [
-                entry
-                for entry in fetch_diagnostics
-                if entry.get("empty")
-            ]
-            for entry in empty_series:
-                logger.warning(
-                    "[fetch_generation] Empty series detail: region=%s fuel=%s total=%s pages=%s",
-                    entry.get("region"),
-                    entry.get("fuel_type"),
-                    entry.get("total_records"),
-                    entry.get("pages"),
-                )
-
-    coverage = (
-        combined.groupby("unique_id")["ds"]
-        .agg(min_ds="min", max_ds="max", rows="count")
-        .reset_index()
-        .sort_values("unique_id")
-    )
-    max_series_log = 25
-    if len(coverage) > max_series_log:
-        logger.info(
-            "[fetch_generation] Coverage (first %s series):\n%s",
-            max_series_log,
-            coverage.head(max_series_log).to_string(index=False),
-        )
-    else:
-        logger.info("[fetch_generation] Coverage:\n%s", coverage.to_string(index=False))
+    if fetch_diagnostics:
+        empty_series = [
+            entry
+            for entry in fetch_diagnostics
+            if entry.get("empty")
+        ]
+        for entry in empty_series:
+            logger.warning(
+                "[fetch_generation] Empty series detail: region=%s fuel=%s total=%s pages=%s",
+                entry.get("region"),
+                entry.get("fuel_type"),
+                entry.get("total_records"),
+                entry.get("pages"),
+            )
 
     combined.to_parquet(output_path, index=False)
     logger.info(f"[fetch_generation] Saved: {output_path} ({len(combined)} rows)")
@@ -177,9 +192,56 @@ def fetch_renewable_weather(
     output_path = config.weather_path()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    def _log_weather_summary(df: pd.DataFrame, source: str) -> None:
+        if df.empty:
+            logger.warning("[fetch_weather] No weather data rows (%s).", source)
+            return
+
+        coverage = (
+            df.groupby("region")["ds"]
+            .agg(min_ds="min", max_ds="max", rows="count")
+            .reset_index()
+            .sort_values("region")
+        )
+        max_region_log = 25
+        if len(coverage) > max_region_log:
+            logger.info(
+                "[fetch_weather] Coverage (%s, first %s regions):\n%s",
+                source,
+                max_region_log,
+                coverage.head(max_region_log).to_string(index=False),
+            )
+        else:
+            logger.info("[fetch_weather] Coverage (%s):\n%s", source, coverage.to_string(index=False))
+
+        missing_cols = [
+            col for col in OpenMeteoRenewable.WEATHER_VARS if col not in df.columns
+        ]
+        if missing_cols:
+            logger.warning(
+                "[fetch_weather] Missing expected weather columns (%s): %s",
+                source,
+                missing_cols,
+            )
+
+        missing_values = {
+            col: int(df[col].isna().sum())
+            for col in OpenMeteoRenewable.WEATHER_VARS
+            if col in df.columns and df[col].isna().any()
+        }
+        if missing_values:
+            logger.warning(
+                "[fetch_weather] Missing weather values (%s): %s",
+                source,
+                missing_values,
+            )
+
     if output_path.exists() and not config.overwrite:
         logger.info(f"[fetch_weather] exists, loading: {output_path}")
-        return pd.read_parquet(output_path)
+        cached = pd.read_parquet(output_path)
+        # Log cached weather coverage to surface missing regions/columns.
+        _log_weather_summary(cached, source="cache")
+        return cached
 
     logger.info(f"[fetch_weather] Fetching weather for {config.regions}")
 
@@ -206,6 +268,9 @@ def fetch_renewable_weather(
         combined = hist_df
 
     combined = combined.sort_values(["region", "ds"]).reset_index(drop=True)
+
+    # Log fresh weather coverage and missing values before saving.
+    _log_weather_summary(combined, source="fresh")
 
     combined.to_parquet(output_path, index=False)
     logger.info(f"[fetch_weather] Saved: {output_path} ({len(combined)} rows)")

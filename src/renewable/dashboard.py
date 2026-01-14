@@ -381,25 +381,48 @@ def render_weather_tab(db_path: str, regions: list):
     """Render weather features visualization."""
     st.subheader("Weather Features")
 
-    # Demo weather data
-    hours = pd.date_range(datetime.now(timezone.utc) - timedelta(hours=48), periods=72, freq="h")
+    weather_df = pd.DataFrame()
 
-    weather_data = []
-    for region in regions[:3]:
-        for h in hours:
-            weather_data.append({
-                "ds": h,
-                "region": region,
-                "wind_speed_10m": np.random.uniform(5, 25) + np.sin(h.hour * np.pi / 12) * 5,
-                "wind_speed_100m": np.random.uniform(10, 35) + np.sin(h.hour * np.pi / 12) * 7,
-                "direct_radiation": max(0, np.sin((h.hour - 6) * np.pi / 12) * 800) if 6 < h.hour < 18 else 0,
-                "cloud_cover": np.random.uniform(0, 100),
-            })
+    # Prefer real pipeline output; no demo fallback.
+    parquet_path = Path("data/renewable/weather.parquet")
+    if parquet_path.exists():
+        try:
+            weather_df = pd.read_parquet(parquet_path)
+            st.success(f"Loaded {len(weather_df)} weather rows from pipeline")
+        except Exception as exc:
+            st.warning(f"Could not load weather parquet: {exc}")
 
-    weather_df = pd.DataFrame(weather_data)
+    if weather_df.empty and Path(db_path).exists():
+        try:
+            with connect(db_path) as con:
+                weather_df = pd.read_sql_query(
+                    "SELECT * FROM weather_features ORDER BY ds ASC",
+                    con,
+                )
+            if not weather_df.empty:
+                st.success(f"Loaded {len(weather_df)} weather rows from database")
+        except Exception as exc:
+            st.warning(f"Could not load weather data from database: {exc}")
+
+    if weather_df.empty:
+        st.warning("No weather data available. Run the pipeline to populate weather features.")
+        return
+
+    weather_df["ds"] = pd.to_datetime(weather_df["ds"], errors="coerce")
+    if regions:
+        weather_df = weather_df[weather_df["region"].isin(regions)]
+    if weather_df.empty:
+        st.warning("No weather data matching selected regions.")
+        return
 
     # Variable selector
-    weather_vars = ["wind_speed_10m", "wind_speed_100m", "direct_radiation", "cloud_cover"]
+    weather_vars = [
+        col for col in ["wind_speed_10m", "wind_speed_100m", "direct_radiation", "cloud_cover"]
+        if col in weather_df.columns
+    ]
+    if not weather_vars:
+        st.warning("Weather data missing expected variables.")
+        return
     selected_var = st.selectbox("Weather Variable", options=weather_vars)
 
     # Plot

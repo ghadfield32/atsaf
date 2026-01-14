@@ -303,6 +303,11 @@ class RenewableForecastModel:
 
         forecasts = forecasts.reset_index()
 
+        # Log per-model point forecasts to isolate which model goes negative.
+        model_cols = [c for c in forecasts.columns if c not in ["unique_id", "ds", "cutoff"]]
+        point_cols = [c for c in model_cols if not any(x in c for x in ["-lo-", "-hi-"])]
+        _log_value_columns_summary(forecasts, point_cols, label="forecast_models")
+
         # Standardize column names
         result = self._standardize_forecast_columns(forecasts)
 
@@ -394,6 +399,11 @@ class RenewableForecastModel:
             best_model = "AutoARIMA"
         else:
             best_model = point_cols[0] if point_cols else None
+
+        if best_model:
+            logger.info(f"[standardize_forecast] Selected model for yhat: {best_model}")
+        else:
+            logger.warning("[standardize_forecast] No model columns found for yhat selection.")
 
         if best_model:
             result["yhat"] = result[best_model]

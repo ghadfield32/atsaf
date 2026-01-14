@@ -21,6 +21,13 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+def _safe_int(value: object) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class EIARenewableFetcher:
     """Fetch wind/solar data for multiple regions from EIA API.
 
@@ -64,6 +71,7 @@ class EIARenewableFetcher:
         fuel_type: str,
         start_date: str,
         end_date: str,
+        diagnostics: Optional[list[dict]] = None,
     ) -> pd.DataFrame:
         """Fetch data for a single region and fuel type.
 
@@ -72,6 +80,7 @@ class EIARenewableFetcher:
             fuel_type: 'WND' for wind or 'SUN' for solar
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
+            diagnostics: Optional list to capture request/response metadata
 
         Returns:
             DataFrame with columns [ds, value, region, fuel_type]
@@ -88,6 +97,31 @@ class EIARenewableFetcher:
         all_records = []
         offset = 0
         last_response_meta: Optional[dict] = None
+        request_pages: list[dict] = []
+        invalid_response = False
+        total_count: Optional[int] = None
+
+        def _append_diagnostics(df: pd.DataFrame) -> None:
+            if diagnostics is None:
+                return
+            min_ds = df["ds"].min() if "ds" in df.columns and not df.empty else None
+            max_ds = df["ds"].max() if "ds" in df.columns and not df.empty else None
+            diagnostics.append(
+                {
+                    "region": region,
+                    "fuel_type": fuel_type,
+                    "requested_start": start_date,
+                    "requested_end": end_date,
+                    "total_records": total_count,
+                    "pages": request_pages,
+                    "row_count": int(len(df)),
+                    "empty": df.empty,
+                    "invalid_response": invalid_response,
+                    "min_ds": min_ds,
+                    "max_ds": max_ds,
+                    "last_response_meta": last_response_meta,
+                }
+            )
 
         while True:
             params = {
@@ -119,6 +153,7 @@ class EIARenewableFetcher:
             data = response.json()
 
             if not self._validate_response(data):
+                invalid_response = True
                 logger.warning(
                     f"Invalid response for {region}/{fuel_type}. "
                     f"request={request_meta}"
@@ -127,6 +162,7 @@ class EIARenewableFetcher:
 
             records = data["response"]["data"]
             response_info = data.get("response", {})
+            total_count = _safe_int(response_info.get("total"))
             last_response_meta = {
                 "total": response_info.get("total"),
                 "returned": len(records),
@@ -134,6 +170,15 @@ class EIARenewableFetcher:
                 "start": start_date,
                 "end": end_date,
             }
+            request_pages.append(
+                {
+                    "offset": offset,
+                    "returned": len(records),
+                    "total": total_count,
+                    "start": start_date,
+                    "end": end_date,
+                }
+            )
             if not records:
                 logger.warning(
                     f"No records in response for {region}/{fuel_type} "
@@ -147,6 +192,12 @@ class EIARenewableFetcher:
 
             # Rate limiting
             time.sleep(self.RATE_LIMIT_DELAY)
+            if total_count is not None and offset >= total_count:
+                logger.info(
+                    f"Reached total records for {region}/{fuel_type} "
+                    f"(total={total_count}, fetched={len(all_records)})."
+                )
+                break
 
         if not all_records:
             logger.warning(f"No data returned for {region}/{fuel_type}")
@@ -154,7 +205,9 @@ class EIARenewableFetcher:
                 logger.warning(
                     f"Response meta for {region}/{fuel_type}: {last_response_meta}"
                 )
-            return pd.DataFrame(columns=["ds", "value", "region", "fuel_type"])
+            empty_df = pd.DataFrame(columns=["ds", "value", "region", "fuel_type"])
+            _append_diagnostics(empty_df)
+            return empty_df
 
         df = pd.DataFrame(all_records)
 
@@ -176,6 +229,8 @@ class EIARenewableFetcher:
 
         logger.info(f"Fetched {len(df)} rows for {region}/{fuel_type}")
 
+        _append_diagnostics(df)
+
         return df[["ds", "value", "region", "fuel_type"]]
 
     def fetch_all_regions(
@@ -185,6 +240,7 @@ class EIARenewableFetcher:
         end_date: str,
         regions: Optional[list[str]] = None,
         max_workers: int = 3,
+        diagnostics: Optional[list[dict]] = None,
     ) -> pd.DataFrame:
         """Fetch data for all regions, return in StatsForecast format.
 
@@ -194,6 +250,7 @@ class EIARenewableFetcher:
             end_date: End date (YYYY-MM-DD)
             regions: List of region codes. If None, uses all regions except US48.
             max_workers: Number of parallel workers (default: 3 for rate limiting)
+            diagnostics: Optional list to capture request/response metadata
 
         Returns:
             DataFrame with columns [unique_id, ds, y] in StatsForecast format.
@@ -219,7 +276,12 @@ class EIARenewableFetcher:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_region = {
                 executor.submit(
-                    self.fetch_region, region, fuel_type, start_date, end_date
+                    self.fetch_region,
+                    region,
+                    fuel_type,
+                    start_date,
+                    end_date,
+                    diagnostics,
                 ): region
                 for region in regions
             }

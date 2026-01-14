@@ -53,6 +53,59 @@ def _json_default(value: object) -> str:
     return str(value)
 
 
+def _summarize_generation_coverage(df: pd.DataFrame) -> dict:
+    if df.empty:
+        return {"row_count": 0, "series_count": 0, "coverage": []}
+
+    coverage = (
+        df.groupby("unique_id")["ds"]
+        .agg(min_ds="min", max_ds="max", rows="count")
+        .reset_index()
+        .sort_values("unique_id")
+    )
+    return {
+        "row_count": int(len(df)),
+        "series_count": int(df["unique_id"].nunique()),
+        "coverage": coverage.to_dict(orient="records"),
+    }
+
+
+def _summarize_negative_forecasts(
+    df: pd.DataFrame,
+    sample_rows: int = 5,
+) -> dict:
+    if df.empty or "yhat" not in df.columns:
+        return {
+            "row_count": int(len(df)),
+            "negative_rows": 0,
+            "series": [],
+            "sample": [],
+        }
+
+    neg = df[df["yhat"] < 0]
+    if neg.empty:
+        return {
+            "row_count": int(len(df)),
+            "negative_rows": 0,
+            "series": [],
+            "sample": [],
+        }
+
+    series_summary = (
+        neg.groupby("unique_id")["yhat"]
+        .agg(count="count", min_value="min", max_value="max", mean_value="mean")
+        .reset_index()
+        .sort_values("unique_id")
+    )
+    sample = neg[["unique_id", "ds", "yhat"]].head(sample_rows)
+    return {
+        "row_count": int(len(df)),
+        "negative_rows": int(len(neg)),
+        "series": series_summary.to_dict(orient="records"),
+        "sample": sample.to_dict(orient="records"),
+    }
+
+
 def run_hourly_pipeline() -> dict:
     data_dir = os.getenv("RENEWABLE_DATA_DIR", "data/renewable")
     regions = _env_list("RENEWABLE_REGIONS", "CALI,ERCO,MISO")
@@ -78,10 +131,12 @@ def run_hourly_pipeline() -> dict:
     cfg.cv_windows = cv_windows
     cfg.cv_step_size = cv_step_size
 
-    results = run_full_pipeline(cfg)
+    fetch_diagnostics: list[dict] = []
+    results = run_full_pipeline(cfg, fetch_diagnostics=fetch_diagnostics)
 
     gen_path = cfg.generation_path()
     gen_df = pd.read_parquet(gen_path)
+    generation_coverage = _summarize_generation_coverage(gen_df)
 
     max_lag_hours = _env_int("MAX_LAG_HOURS", 3)
     max_missing_ratio = _env_float("MAX_MISSING_RATIO", 0.02)
@@ -91,6 +146,9 @@ def run_hourly_pipeline() -> dict:
         max_missing_ratio=max_missing_ratio,
         expected_series=_expected_series(regions, fuel_types),
     )
+
+    forecasts_df = pd.read_parquet(cfg.forecasts_path())
+    negative_forecasts = _summarize_negative_forecasts(forecasts_df)
 
     run_log = {
         "run_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -110,6 +168,11 @@ def run_hourly_pipeline() -> dict:
             "ok": report.ok,
             "message": report.message,
             "details": report.details,
+        },
+        "diagnostics": {
+            "fetch": fetch_diagnostics,
+            "generation_coverage": generation_coverage,
+            "negative_forecasts": negative_forecasts,
         },
     }
 

@@ -77,11 +77,13 @@ class RenewablePipelineConfig:
 
 def fetch_renewable_data(
     config: RenewablePipelineConfig,
+    fetch_diagnostics: Optional[list[dict]] = None,
 ) -> pd.DataFrame:
     """Task 1: Fetch EIA generation data for all regions and fuel types.
 
     Args:
         config: Pipeline configuration
+        fetch_diagnostics: Optional list to capture per-region fetch metadata
 
     Returns:
         DataFrame with columns [unique_id, ds, y]
@@ -104,6 +106,7 @@ def fetch_renewable_data(
             start_date=config.start_date,
             end_date=config.end_date,
             regions=config.regions,
+            diagnostics=fetch_diagnostics,
         )
         all_dfs.append(df)
 
@@ -121,6 +124,20 @@ def fetch_renewable_data(
         logger.warning(
             f"[fetch_generation] Missing expected series after fetch: {missing_series}"
         )
+        if fetch_diagnostics:
+            empty_series = [
+                entry
+                for entry in fetch_diagnostics
+                if entry.get("empty")
+            ]
+            for entry in empty_series:
+                logger.warning(
+                    "[fetch_generation] Empty series detail: region=%s fuel=%s total=%s pages=%s",
+                    entry.get("region"),
+                    entry.get("fuel_type"),
+                    entry.get("total_records"),
+                    entry.get("pages"),
+                )
 
     coverage = (
         combined.groupby("unique_id")["ds"]
@@ -364,7 +381,10 @@ def compute_renewable_drift(
     return result
 
 
-def run_full_pipeline(config: RenewablePipelineConfig) -> dict:
+def run_full_pipeline(
+    config: RenewablePipelineConfig,
+    fetch_diagnostics: Optional[list[dict]] = None,
+) -> dict:
     """Run the complete renewable forecasting pipeline.
 
     Steps:
@@ -375,6 +395,7 @@ def run_full_pipeline(config: RenewablePipelineConfig) -> dict:
 
     Args:
         config: Pipeline configuration
+        fetch_diagnostics: Optional list to capture per-region fetch metadata
 
     Returns:
         Dictionary with pipeline results
@@ -386,7 +407,7 @@ def run_full_pipeline(config: RenewablePipelineConfig) -> dict:
     results = {}
 
     # Step 1: Fetch generation
-    generation_df = fetch_renewable_data(config)
+    generation_df = fetch_renewable_data(config, fetch_diagnostics=fetch_diagnostics)
     results["generation_rows"] = len(generation_df)
     results["series_count"] = generation_df["unique_id"].nunique()
 
@@ -405,6 +426,9 @@ def run_full_pipeline(config: RenewablePipelineConfig) -> dict:
     # Step 4: Generate forecasts
     forecasts = generate_renewable_forecasts(config, generation_df, weather_df)
     results["forecast_rows"] = len(forecasts)
+
+    if fetch_diagnostics is not None:
+        results["fetch_diagnostics"] = fetch_diagnostics
 
     logger.info(f"[pipeline] Complete. Best model: {results['best_model']}")
 

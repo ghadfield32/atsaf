@@ -1,7 +1,7 @@
 version: "3.9"
 services:
   rstudio:
-    image: "rkrispin/atsaf:dev.0.0.0.9000" 
+    image: "rkrispin/atsaf:dev.0.0.0.9000"
     ports:
       - "8787:8787"
     volumes:

@@ -1,10 +1,10 @@
 # ---- Description
-# This file installs the required Python packages on the Docker image during the build time. 
+# This file installs the required Python packages on the Docker image during the build time.
 # The list of packages and their versions is set on the packages.json file
 # ---- Dependencies
-# To parse the json jq must be installed on the docker image. 
+# To parse the json jq must be installed on the docker image.
 # See: https://stedolan.github.io/jq/
-# ---- Code starts here 
+# ---- Code starts here
 # Set the working directory
 setwd("./packages")
 
@@ -46,13 +46,11 @@ if(!is.null(py_df) && nrow(py_df) > 0){
        conda_install <- paste(". /root/.bashrc && ",
                               "conda activate ", conda_env," && ",
                               "conda info --envs && ",
-                              "pip install ", 
+                              "pip install ",
                               py_df$package[i],
-                              "==", 
+                              "==",
                               py_df$version[i],
                               sep = "")
-          system(command = conda_install)                     
+          system(command = conda_install)
     }
 }
-
-

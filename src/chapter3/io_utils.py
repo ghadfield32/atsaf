@@ -29,5 +29,3 @@ def atomic_write_json(payload: Dict[str, Any], path: Path) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, default=str)
     os.replace(tmp, path)
-
-

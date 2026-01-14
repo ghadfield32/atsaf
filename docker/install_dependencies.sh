@@ -35,7 +35,7 @@ rm -f "$TEMP_QUARTO"
 sudo apt update && apt-get install -y --no-install-recommends \
     software-properties-common \
     && sudo add-apt-repository -y ppa:deadsnakes/ppa \
-    && sudo apt update 
+    && sudo apt update
 
 wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh \
     && /bin/bash ~/miniconda.sh -b -p /opt/conda \
@@ -45,7 +45,7 @@ wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.
 
 # Set environment
 . /root/.bashrc \
-    && conda create -y --name $CONDA_ENV python=$PYTHON_VER 
+    && conda create -y --name $CONDA_ENV python=$PYTHON_VER
 
 echo "conda activate $CONDA_ENV" >> ~/.bashrc
 

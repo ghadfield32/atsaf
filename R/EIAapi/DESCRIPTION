@@ -2,8 +2,8 @@ Package: EIAapi
 Type: Package
 Title: Functions for query data from the EIA API
 Version: 0.0.0.9000
-Authors@R: person(given = "Rami", 
-                    family ="Krispin", 
+Authors@R: person(given = "Rami",
+                    family ="Krispin",
                     email = "rami.krispin@gmail.com",
                     role = c("aut", "cre"))
 Maintainer: Rami Krispin <rami.krispin@gmail.com>

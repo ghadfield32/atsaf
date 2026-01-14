@@ -66,4 +66,3 @@ def run(
 if __name__ == "__main__":
     sys.argv = _strip_ipykernel_args(sys.argv)
     app(standalone_mode=False)  # <-- prevents SystemExit in Jupyter
-

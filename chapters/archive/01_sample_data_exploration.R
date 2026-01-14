@@ -133,15 +133,15 @@ cat("✓ Saved: time_series_plot.png\n")
 # Plot 2: Distribution of Values
 p2 <- ggplot(plot_data, aes(x = value)) +
   geom_histogram(bins = 20, fill = "#2E86AB", alpha = 0.7, color = "black") +
-  geom_vline(aes(xintercept = mean(value, na.rm = TRUE)), 
+  geom_vline(aes(xintercept = mean(value, na.rm = TRUE)),
              color = "red", linetype = "dashed", linewidth = 1) +
-  geom_vline(aes(xintercept = median(value, na.rm = TRUE)), 
+  geom_vline(aes(xintercept = median(value, na.rm = TRUE)),
              color = "green", linetype = "dotted", linewidth = 1) +
   labs(
     title = "Distribution of Generation Values",
     x = "Generation (GWh)",
     y = "Frequency",
-    subtitle = paste("Mean:", round(mean(plot_data$value, na.rm = TRUE), 2), 
+    subtitle = paste("Mean:", round(mean(plot_data$value, na.rm = TRUE), 2),
                      "| Median:", round(median(plot_data$value, na.rm = TRUE), 2))
   ) +
   theme_minimal() +
@@ -163,7 +163,7 @@ cat("✓ Saved: acf_plot.png\n")
 trend_smooth <- zoo::rollmean(plot_data$value, k = 12, fill = NA)
 detrended <- plot_data$value - trend_smooth
 
-p4 <- ggplot(data.frame(date = plot_data$date, trend = trend_smooth), 
+p4 <- ggplot(data.frame(date = plot_data$date, trend = trend_smooth),
              aes(x = date, y = trend)) +
   geom_line(color = "#E63946", linewidth = 1) +
   labs(

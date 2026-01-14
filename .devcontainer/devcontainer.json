@@ -18,9 +18,9 @@
                 "reditorsupport.r",
                 "redhat.vscode-yaml",
                 "REditorSupport.r",
-                "REditorSupport.r-lsp", 
+                "REditorSupport.r-lsp",
                 "RDebugger.r-debugger",
-                "purocean.drawio-preview" 
+                "purocean.drawio-preview"
             ]
         }
     },

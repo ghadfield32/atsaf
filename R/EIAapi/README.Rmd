@@ -1,7 +1,7 @@
 ---
 output: github_document
-editor_options: 
-  markdown: 
+editor_options:
+  markdown:
     wrap: 72
 ---
 
@@ -65,10 +65,10 @@ metadata:
 
 [![](man/images/EIA_API_browser.png)](https://www.eia.gov/opendata/browser/)
 
-In the example above: 
+In the example above:
 
 - The API URL: https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/, and
-- The query header: 
+- The query header:
 ```JSON
 {
 "frequency": "hourly",
@@ -221,19 +221,19 @@ df5 <- eia_get(
 
 df5
 
-df5$time <- as.POSIXct(paste(substr(df5$period, start = 1, stop = 10)," ", 
-                             substr(df5$period, start = 12, stop = 13), ":00:00", 
+df5$time <- as.POSIXct(paste(substr(df5$period, start = 1, stop = 10)," ",
+                             substr(df5$period, start = 12, stop = 13), ":00:00",
                              sep = ""))
 
-plot(x = df5$time, y = df5$value, 
+plot(x = df5$time, y = df5$value,
      main = "United States Lower 48 Hourly Electricity Generation by Natural Gas",
      col.main = "#457b9d",
      col = "#073b4c",
      sub = "Source: Form EIA-930 Product: Hourly Electric Grid Monitor",
      xlab = "",
      ylab = "Megawatt Hours",
-     cex.main=1, 
-     cex.lab=1, 
+     cex.main=1,
+     cex.lab=1,
      cex.sub=0.8,
      frame=FALSE,
      type = "l")
@@ -260,7 +260,7 @@ We can now use the `lapply` function to iterate over the `interval` vector and a
 
 ```{r}
 df6 <- lapply(1:(length(interval) -1), function(i){
-  
+
   s <- as.character(interval[i])
 
   start <- paste(substr(s, start = 1, stop = 10),
@@ -290,7 +290,7 @@ df6 <- lapply(1:(length(interval) -1), function(i){
     start = start,
     end = end
   )
-}) %>% 
+}) %>%
   dplyr::bind_rows()
 
 head(df6)
@@ -317,8 +317,8 @@ df6$mv <- lapply(1:12, function(i){
   d <- NULL
   d <- data.frame(lag = df6$value %>% dplyr::lag(n = i),
              lead = df6$value %>% dplyr::lead(n = i))
-  
-  names(d) <- c(paste("lag", i, sep = "_"), 
+
+  names(d) <- c(paste("lag", i, sep = "_"),
                 paste("lead", i, sep = "_"))
   return(d)
 }) %>% dplyr::bind_cols(df6$value) %>%
@@ -338,7 +338,7 @@ par(mar = c(4, 5, 2, 1), # c(bottom, left, top, right)
 hourly_color <- rgb(200, 79, 178, alpha = 20, maxColorValue = 255)
 
 plot(
-  x = df6$time, y = df6$value, 
+  x = df6$time, y = df6$value,
   main = "United States Lower 48 Hourly Electricity Generation by Natural Gas",
   col.main = "#457b9d",
   col = hourly_color,
@@ -346,11 +346,11 @@ plot(
   xlab = "Source: Form EIA-930 Product: Hourly Electric Grid Monitor",
   ylab = "Megawatt Hours",
   # axes = FALSE, # Don't plot the axes
-  frame.plot = FALSE, 
-  cex.main=1, 
-  cex.lab=1, 
+  frame.plot = FALSE,
+  cex.main=1,
+  cex.lab=1,
   cex.sub=0.8,
-  xlim = c(min(df6$time), max(df6$time)), 
+  xlim = c(min(df6$time), max(df6$time)),
   ylim = c(70000, 350000),
   panel.first = abline(h = seq(100000, 350000, 50000), col = "grey80"),
   # frame=FALSE,

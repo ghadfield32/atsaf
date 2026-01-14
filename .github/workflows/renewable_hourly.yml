@@ -61,23 +61,23 @@ jobs:
         run: |
           if [ -f data/renewable/run_log.json ]; then
           python - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
-import json
-from pathlib import Path
+          import json
+          from pathlib import Path
 
-data = json.loads(Path("data/renewable/run_log.json").read_text())
-validation = data.get("validation", {})
-details = validation.get("details", {})
+          data = json.loads(Path("data/renewable/run_log.json").read_text())
+          validation = data.get("validation", {})
+          details = validation.get("details", {})
 
-lines = [
-    "### Renewable hourly run",
-    f"- run_at_utc: {data.get('run_at_utc')}",
-    f"- validation_ok: {validation.get('ok')}",
-    f"- message: {validation.get('message')}",
-    f"- max_ds: {details.get('max_ds')}",
-    f"- lag_hours: {details.get('lag_hours')}",
-]
-print("\n".join(lines))
-PY
+          lines = [
+              "### Renewable hourly run",
+              f"- run_at_utc: {data.get('run_at_utc')}",
+              f"- validation_ok: {validation.get('ok')}",
+              f"- message: {validation.get('message')}",
+              f"- max_ds: {details.get('max_ds')}",
+              f"- lag_hours: {details.get('lag_hours')}",
+          ]
+          print("\n".join(lines))
+          PY
           else
           echo "No run_log.json found." >> "$GITHUB_STEP_SUMMARY"
           fi

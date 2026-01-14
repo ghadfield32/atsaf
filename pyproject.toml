@@ -32,22 +32,22 @@ dependencies = [
     "numpy>=1.24.0",              # Numerical computing
     "duckdb>=0.8.0",              # Fast SQL queries on data
     "python-dotenv>=1.0.0",       # Load environment variables from .env file
-    
+
     # Time series forecasting
     "statsforecast>=1.5.0",       # Statistical forecasting methods
     "mlforecast>=0.10.0",         # ML-based forecasting
     "nixtla>=0.0.1",              # Nixtla ecosystem utilities
-    
+
     # Statistical analysis and modeling
     "statsmodels>=0.14.0",        # Statistical modeling and tests
     "scipy>=1.10.0",              # Scientific computing
     "scikit-learn>=1.2.0",        # Machine learning and preprocessing
-    
+
     # Visualization
     "matplotlib>=3.7.0",          # Static plotting
     "seaborn>=0.12.0",            # Statistical data visualization
     "plotly>=5.0.0",              # Interactive web-based visualization
-    
+
     # MLOps and workflow
     "mlflow>=2.0.0",              # Experiment tracking and model registry
     "apache-airflow>=2.5.0",      # Workflow orchestration

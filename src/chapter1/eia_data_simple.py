@@ -618,7 +618,7 @@ class EIADataFetcher:
         return stats
 
     def prepare_for_forecasting(
-        self, 
+        self,
         df: pd.DataFrame,
         unique_id: str = "1"
     ) -> pd.DataFrame:

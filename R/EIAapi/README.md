@@ -86,13 +86,13 @@ the `eia_get` function:
 ``` r
 library(EIAapi)
 library(dplyr)
-#> 
+#>
 #> Attaching package: 'dplyr'
 #> The following objects are masked from 'package:stats':
-#> 
+#>
 #>     filter, lag
 #> The following objects are masked from 'package:base':
-#> 
+#>
 #>     intersect, setdiff, setequal, union
 # Pulling the API key from my renviron file
 api_key <- Sys.getenv("eia_key")
@@ -163,7 +163,7 @@ df2
 #>    3: 2019-09-02T11       MIDA                            Mid-Atlantic       NG
 #>    4: 2019-09-02T18         NW                               Northwest      OTH
 #>    5: 2019-09-02T21       AECI   Associated Electric Cooperative, Inc.       NG
-#>   ---                                                                          
+#>   ---
 #> 4996: 2019-09-01T15        HST                       City of Homestead       NG
 #> 4997: 2019-09-01T18        AEC           PowerSouth Energy Cooperative      WAT
 #> 4998: 2019-09-01T17         SC South Carolina Public Service Authority       NG
@@ -175,7 +175,7 @@ df2
 #>    3: Natural gas 24868 megawatthours
 #>    4:       Other   795 megawatthours
 #>    5: Natural gas  1551 megawatthours
-#>   ---                                
+#>   ---
 #> 4996: Natural gas     0 megawatthours
 #> 4997:       Hydro     0 megawatthours
 #> 4998: Natural gas   780 megawatthours
@@ -203,7 +203,7 @@ df3
 #>    3: 2019-09-01T16       SWPP                           Southwest Power Pool
 #>    4: 2019-09-01T09       PSCO             Public Service Company of Colorado
 #>    5: 2019-09-01T23       CPLW                      Duke Energy Progress West
-#>   ---                                                                        
+#>   ---
 #> 4996: 2019-09-08T13       SCEG           Dominion Energy South Carolina, Inc.
 #> 4997: 2019-09-09T02         SC        South Carolina Public Service Authority
 #> 4998: 2019-09-09T03        YAD Alcoa Power Generating, Inc. - Yadkin Division
@@ -215,7 +215,7 @@ df3
 #>    3:      COL        Coal 13539 megawatthours
 #>    4:      COL        Coal  1835 megawatthours
 #>    5:      WAT       Hydro    32 megawatthours
-#>   ---                                         
+#>   ---
 #> 4996:      WAT       Hydro    15 megawatthours
 #> 4997:      SUN       Solar     2 megawatthours
 #> 4998:      WAT       Hydro     1 megawatthours
@@ -278,7 +278,7 @@ df4
 #>    3: 2018-07-01T07       US48 United States Lower 48       NG Natural gas
 #>    4: 2018-07-01T08       US48 United States Lower 48       NG Natural gas
 #>    5: 2018-07-01T09       US48 United States Lower 48       NG Natural gas
-#>   ---                                                                     
+#>   ---
 #> 4996: 2019-01-25T08       US48 United States Lower 48       NG Natural gas
 #> 4997: 2019-01-25T09       US48 United States Lower 48       NG Natural gas
 #> 4998: 2019-01-25T10       US48 United States Lower 48       NG Natural gas
@@ -290,7 +290,7 @@ df4
 #>    3:  91741 megawatthours
 #>    4: 103817 megawatthours
 #>    5:  99727 megawatthours
-#>   ---                     
+#>   ---
 #> 4996: 133329 megawatthours
 #> 4997: 133331 megawatthours
 #> 4998: 140225 megawatthours
@@ -326,7 +326,7 @@ df5
 #>    3: 2022-06-01T02       US48 United States Lower 48       NG Natural gas
 #>    4: 2022-06-01T03       US48 United States Lower 48       NG Natural gas
 #>    5: 2022-06-01T04       US48 United States Lower 48       NG Natural gas
-#>   ---                                                                     
+#>   ---
 #> 2925: 2022-09-30T20       US48 United States Lower 48       NG Natural gas
 #> 2926: 2022-09-30T21       US48 United States Lower 48       NG Natural gas
 #> 2927: 2022-09-30T22       US48 United States Lower 48       NG Natural gas
@@ -338,26 +338,26 @@ df5
 #>    3: 233394 megawatthours
 #>    4: 215728 megawatthours
 #>    5: 183732 megawatthours
-#>   ---                     
+#>   ---
 #> 2925: 186357 megawatthours
 #> 2926: 190568 megawatthours
 #> 2927: 196053 megawatthours
 #> 2928: 198863 megawatthours
 #> 2929: 200753 megawatthours
 
-df5$time <- as.POSIXct(paste(substr(df5$period, start = 1, stop = 10)," ", 
-                             substr(df5$period, start = 12, stop = 13), ":00:00", 
+df5$time <- as.POSIXct(paste(substr(df5$period, start = 1, stop = 10)," ",
+                             substr(df5$period, start = 12, stop = 13), ":00:00",
                              sep = ""))
 
-plot(x = df5$time, y = df5$value, 
+plot(x = df5$time, y = df5$value,
      main = "United States Lower 48 Hourly Electricity Generation by Natural Gas",
      col.main = "#457b9d",
      col = "#073b4c",
      sub = "Source: Form EIA-930 Product: Hourly Electric Grid Monitor",
      xlab = "",
      ylab = "Megawatt Hours",
-     cex.main=1, 
-     cex.lab=1, 
+     cex.main=1,
+     cex.lab=1,
      cex.sub=0.8,
      frame=FALSE,
      type = "l")
@@ -402,7 +402,7 @@ vector and append it into a single \`data.frame object:
 
 ``` r
 df6 <- lapply(1:(length(interval) -1), function(i){
-  
+
   s <- as.character(interval[i])
 
   start <- paste(substr(s, start = 1, stop = 10),
@@ -432,7 +432,7 @@ df6 <- lapply(1:(length(interval) -1), function(i){
     start = start,
     end = end
   )
-}) %>% 
+}) %>%
   dplyr::bind_rows()
 #> Warning in system("timedatectl", intern = TRUE): running command 'timedatectl'
 #> had status 1
@@ -492,8 +492,8 @@ df6$mv <- lapply(1:12, function(i){
   d <- NULL
   d <- data.frame(lag = df6$value %>% dplyr::lag(n = i),
              lead = df6$value %>% dplyr::lead(n = i))
-  
-  names(d) <- c(paste("lag", i, sep = "_"), 
+
+  names(d) <- c(paste("lag", i, sep = "_"),
                 paste("lead", i, sep = "_"))
   return(d)
 }) %>% dplyr::bind_cols(df6$value) %>%
@@ -515,7 +515,7 @@ par(mar = c(4, 5, 2, 1), # c(bottom, left, top, right)
 hourly_color <- rgb(200, 79, 178, alpha = 20, maxColorValue = 255)
 
 plot(
-  x = df6$time, y = df6$value, 
+  x = df6$time, y = df6$value,
   main = "United States Lower 48 Hourly Electricity Generation by Natural Gas",
   col.main = "#457b9d",
   col = hourly_color,
@@ -523,11 +523,11 @@ plot(
   xlab = "Source: Form EIA-930 Product: Hourly Electric Grid Monitor",
   ylab = "Megawatt Hours",
   # axes = FALSE, # Don't plot the axes
-  frame.plot = FALSE, 
-  cex.main=1, 
-  cex.lab=1, 
+  frame.plot = FALSE,
+  cex.main=1,
+  cex.lab=1,
   cex.sub=0.8,
-  xlim = c(min(df6$time), max(df6$time)), 
+  xlim = c(min(df6$time), max(df6$time)),
   ylim = c(70000, 350000),
   panel.first = abline(h = seq(100000, 350000, 50000), col = "grey80"),
   # frame=FALSE,

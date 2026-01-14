@@ -19,7 +19,11 @@ from typing import Optional
 import pandas as pd
 
 from src.renewable.eia_renewable import EIARenewableFetcher
-from src.renewable.modeling import RenewableForecastModel, compute_baseline_metrics
+from src.renewable.modeling import (
+    RenewableForecastModel,
+    _log_series_summary,
+    compute_baseline_metrics,
+)
 from src.renewable.open_meteo import OpenMeteoRenewable
 from src.renewable.regions import REGIONS, list_regions
 
@@ -105,6 +109,8 @@ def fetch_renewable_data(
 
     combined = pd.concat(all_dfs, ignore_index=True)
     combined = combined.sort_values(["unique_id", "ds"]).reset_index(drop=True)
+
+    _log_series_summary(combined, value_col="y", label="generation_data")
 
     combined.to_parquet(output_path, index=False)
     logger.info(f"[fetch_generation] Saved: {output_path} ({len(combined)} rows)")

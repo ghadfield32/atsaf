@@ -19,6 +19,94 @@ from src.chapter2.evaluation import ForecastMetrics
 logger = logging.getLogger(__name__)
 
 
+def _log_value_columns_summary(
+    df: pd.DataFrame,
+    value_cols: list[str],
+    label: str,
+) -> None:
+    """Log min/max/negative/missing counts for multiple value columns."""
+    if df is None or df.empty:
+        logger.warning(f"[{label}] Empty dataframe; no diagnostics.")
+        return
+
+    for col in value_cols:
+        if col not in df.columns:
+            logger.warning(f"[{label}] Missing column: {col}")
+            continue
+
+        series = df[col]
+        missing = int(series.isna().sum())
+        neg_count = int((series < 0).sum())
+        min_val = series.min()
+        max_val = series.max()
+
+        msg = (
+            f"[{label}] {col}: min={min_val}, max={max_val}, "
+            f"negatives={neg_count}, missing={missing}"
+        )
+
+        if neg_count > 0 or missing > 0:
+            logger.warning(msg)
+        else:
+            logger.info(msg)
+
+
+def _log_series_summary(
+    df: pd.DataFrame,
+    value_col: str,
+    label: str,
+    id_col: str = "unique_id",
+    sample_rows: int = 3,
+    max_series_log: int = 25,
+) -> None:
+    """Log per-series summary and sample negative rows to surface data issues."""
+    if df is None or df.empty:
+        logger.warning(f"[{label}] Empty dataframe; no diagnostics.")
+        return
+
+    if value_col not in df.columns:
+        logger.warning(f"[{label}] Missing column: {value_col}")
+        return
+
+    missing = int(df[value_col].isna().sum())
+    if missing > 0:
+        logger.warning(f"[{label}] {value_col} has {missing} missing values")
+
+    if id_col in df.columns:
+        summary = df.groupby(id_col)[value_col].agg(
+            count="count",
+            min_value="min",
+            max_value="max",
+            mean_value="mean",
+            neg_count=lambda s: (s < 0).sum(),
+            zero_count=lambda s: (s == 0).sum(),
+        ).reset_index()
+
+        logger.info(f"[{label}] Series summary for {value_col}: {len(summary)} series")
+
+        if len(summary) > max_series_log:
+            truncated = summary.head(max_series_log)
+            logger.info(f"[{label}] Summary (first {max_series_log} series):\n{truncated.to_string(index=False)}")
+        else:
+            logger.info(f"[{label}] Summary:\n{summary.to_string(index=False)}")
+
+        neg_summary = summary[summary["neg_count"] > 0]
+        if not neg_summary.empty:
+            logger.warning(f"[{label}] Series with negative {value_col} values:\n{neg_summary.to_string(index=False)}")
+    else:
+        overall = df[value_col].describe()
+        logger.info(f"[{label}] {value_col} summary: {overall.to_dict()}")
+
+    neg_rows = df[df[value_col] < 0]
+    if not neg_rows.empty:
+        cols = [c for c in [id_col, "ds", value_col] if c in neg_rows.columns]
+        sample = neg_rows[cols].head(sample_rows)
+        logger.warning(
+            f"[{label}] Negative {value_col} rows: {len(neg_rows)}. "
+            f"Sample:\n{sample.to_string(index=False)}"
+        )
+
+
 def _get_n_jobs() -> int:
     raw = os.getenv("RENEWABLE_N_JOBS", "1").strip()
     try:
@@ -108,10 +196,33 @@ class RenewableForecastModel:
                 how="left",
             )
 
+            # Diagnostics to surface weather gaps before/after forward fill.
+            missing_before = {
+                col: int(result[col].isna().sum())
+                for col in weather_cols
+                if col in result.columns and result[col].isna().any()
+            }
+            if missing_before:
+                logger.warning(
+                    "[prepare_features] Missing weather values after merge: "
+                    f"{missing_before}"
+                )
+
             # Fill missing weather with forward fill within series
             for col in weather_cols:
                 if col in result.columns:
                     result[col] = result.groupby("unique_id")[col].ffill()
+
+            missing_after = {
+                col: int(result[col].isna().sum())
+                for col in weather_cols
+                if col in result.columns and result[col].isna().any()
+            }
+            if missing_after:
+                logger.warning(
+                    "[prepare_features] Weather values still missing after ffill: "
+                    f"{missing_after}"
+                )
 
             result = result.drop(columns=["region"])
 
@@ -137,6 +248,8 @@ class RenewableForecastModel:
 
         # Prepare features
         train_df = self.prepare_features(df, weather_df)
+
+        _log_series_summary(train_df, value_col="y", label="fit_input")
 
         # Define models
         models = [
@@ -193,6 +306,12 @@ class RenewableForecastModel:
         # Standardize column names
         result = self._standardize_forecast_columns(forecasts)
 
+        _log_series_summary(result, value_col="yhat", label="forecast_yhat")
+        interval_cols = []
+        for level in self.confidence_levels:
+            interval_cols.extend([f"yhat_lo_{level}", f"yhat_hi_{level}"])
+        _log_value_columns_summary(result, interval_cols, label="forecast_intervals")
+
         logger.info(f"Predictions generated: {len(result)} rows, {self.horizon}h horizon")
 
         return result
@@ -221,6 +340,8 @@ class RenewableForecastModel:
         # Prepare features
         cv_df = self.prepare_features(df, weather_df)
         cv_df = cv_df[["unique_id", "ds", "y"]].copy()
+
+        _log_series_summary(cv_df, value_col="y", label="cv_input")
 
         # Models
         models = [

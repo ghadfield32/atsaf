@@ -7,3 +7,6 @@
 .bash_history
 .local/
 .env
+.venv/
+__pycache__/
+*.pyc

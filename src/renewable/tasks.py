@@ -112,6 +112,32 @@ def fetch_renewable_data(
 
     _log_series_summary(combined, value_col="y", label="generation_data")
 
+    expected_series = {
+        f"{region}_{fuel}" for region in config.regions for fuel in config.fuel_types
+    }
+    present_series = set(combined["unique_id"])
+    missing_series = sorted(expected_series - present_series)
+    if missing_series:
+        logger.warning(
+            f"[fetch_generation] Missing expected series after fetch: {missing_series}"
+        )
+
+    coverage = (
+        combined.groupby("unique_id")["ds"]
+        .agg(min_ds="min", max_ds="max", rows="count")
+        .reset_index()
+        .sort_values("unique_id")
+    )
+    max_series_log = 25
+    if len(coverage) > max_series_log:
+        logger.info(
+            "[fetch_generation] Coverage (first %s series):\n%s",
+            max_series_log,
+            coverage.head(max_series_log).to_string(index=False),
+        )
+    else:
+        logger.info("[fetch_generation] Coverage:\n%s", coverage.to_string(index=False))
+
     combined.to_parquet(output_path, index=False)
     logger.info(f"[fetch_generation] Saved: {output_path} ({len(combined)} rows)")
 

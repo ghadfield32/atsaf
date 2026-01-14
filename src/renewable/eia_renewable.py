@@ -87,6 +87,7 @@ class EIARenewableFetcher:
 
         all_records = []
         offset = 0
+        last_response_meta: Optional[dict] = None
 
         while True:
             params = {
@@ -102,6 +103,15 @@ class EIARenewableFetcher:
                 "sort[0][column]": "period",
                 "sort[0][direction]": "asc",
             }
+            request_meta = {
+                "respondent": region,
+                "fuel_type": fuel_type,
+                "start": start_date,
+                "end": end_date,
+                "offset": offset,
+                "length": self.MAX_RECORDS_PER_REQUEST,
+                "frequency": "hourly",
+            }
 
             response = requests.get(self.BASE_URL, params=params, timeout=30)
             response.raise_for_status()
@@ -109,11 +119,27 @@ class EIARenewableFetcher:
             data = response.json()
 
             if not self._validate_response(data):
-                logger.warning(f"Invalid response for {region}/{fuel_type}")
+                logger.warning(
+                    f"Invalid response for {region}/{fuel_type}. "
+                    f"request={request_meta}"
+                )
                 break
 
             records = data["response"]["data"]
+            response_info = data.get("response", {})
+            last_response_meta = {
+                "total": response_info.get("total"),
+                "returned": len(records),
+                "offset": offset,
+                "start": start_date,
+                "end": end_date,
+            }
             if not records:
+                logger.warning(
+                    f"No records in response for {region}/{fuel_type} "
+                    f"(total={last_response_meta['total']}, offset={offset}, "
+                    f"start={start_date}, end={end_date})"
+                )
                 break
 
             all_records.extend(records)
@@ -124,6 +150,10 @@ class EIARenewableFetcher:
 
         if not all_records:
             logger.warning(f"No data returned for {region}/{fuel_type}")
+            if last_response_meta is not None:
+                logger.warning(
+                    f"Response meta for {region}/{fuel_type}: {last_response_meta}"
+                )
             return pd.DataFrame(columns=["ds", "value", "region", "fuel_type"])
 
         df = pd.DataFrame(all_records)
@@ -176,10 +206,14 @@ class EIARenewableFetcher:
         if regions is None:
             regions = [r for r in REGIONS.keys() if r != "US48"]
 
-        logger.info(f"Fetching {fuel_type} for {len(regions)} regions: {regions}")
+        logger.info(
+            f"Fetching {fuel_type} for {len(regions)} regions: {regions} "
+            f"(start={start_date}, end={end_date})"
+        )
 
         all_dfs = []
         failed_regions = []
+        empty_regions = []
 
         # Fetch regions with controlled parallelism
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -199,6 +233,7 @@ class EIARenewableFetcher:
                         logger.info(f"[OK] {region}: {len(df)} rows")
                     else:
                         logger.warning(f"[EMPTY] {region}: no data")
+                        empty_regions.append(region)
                 except Exception as e:
                     logger.error(f"[FAIL] {region}: {e}")
                     failed_regions.append(region)
@@ -225,11 +260,14 @@ class EIARenewableFetcher:
         logger.info(
             f"Combined dataset: {len(result)} rows, "
             f"{result['unique_id'].nunique()} series, "
-            f"{len(failed_regions)} failed regions"
+            f"{len(failed_regions)} failed regions, "
+            f"{len(empty_regions)} empty regions"
         )
 
         if failed_regions:
             logger.warning(f"Failed regions: {failed_regions}")
+        if empty_regions:
+            logger.warning(f"Empty regions: {empty_regions}")
 
         return result
 

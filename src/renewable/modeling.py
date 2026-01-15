@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 from dataclasses import dataclass
 from typing import Optional, Sequence
+import re
+from typing import Any
 
 from src.chapter2.evaluation import ForecastMetrics
 
@@ -190,6 +192,174 @@ def _add_time_features(df: pd.DataFrame) -> pd.DataFrame:
 
     return out.drop(columns=["hour", "dow"])
 
+def _infer_model_columns(cv_df: pd.DataFrame) -> list[str]:
+    """
+    Infer StatsForecast model prediction columns from a cross_validation dataframe.
+
+    We treat as "model columns" those that:
+      - are not core columns (unique_id, ds, cutoff, y)
+      - are not interval columns like '<model>-lo-80' or '<model>-hi-95'
+    """
+    core = {"unique_id", "ds", "cutoff", "y"}
+    cols = [c for c in cv_df.columns if c not in core]
+
+    model_cols: set[str] = set()
+    interval_pat = re.compile(r"-(lo|hi)-\d+$")
+    for c in cols:
+        if interval_pat.search(c):
+            continue
+        model_cols.add(c)
+
+    return sorted(model_cols)
+
+
+def compute_leaderboard(
+    cv_df: pd.DataFrame,
+    *,
+    confidence_levels: tuple[int, int] = (80, 95),
+) -> pd.DataFrame:
+    """
+    Build an aggregated leaderboard from StatsForecast cross_validation output.
+
+    Returns columns:
+      - model, rmse, mae, mape, valid_rows
+      - coverage_<level> if interval columns exist
+    """
+    required = {"y", "unique_id", "ds", "cutoff"}
+    missing = required - set(cv_df.columns)
+    if missing:
+        raise ValueError(f"[leaderboard] cv_df missing required columns: {sorted(missing)}")
+
+    model_cols = _infer_model_columns(cv_df)
+    if not model_cols:
+        raise RuntimeError(
+            f"[leaderboard] Could not infer any model prediction columns. "
+            f"cv_df columns={cv_df.columns.tolist()}"
+        )
+
+    rows: list[dict[str, Any]] = []
+    y_true = cv_df["y"].to_numpy()
+
+    for m in model_cols:
+        if m not in cv_df.columns:
+            continue
+
+        y_pred = cv_df[m].to_numpy()
+        valid_mask = np.isfinite(y_true) & np.isfinite(y_pred)
+        valid_rows = int(valid_mask.sum())
+
+        metrics = {
+            "model": m,
+            "rmse": float(ForecastMetrics.rmse(y_true, y_pred)),
+            "mae": float(ForecastMetrics.mae(y_true, y_pred)),
+            "mape": float(ForecastMetrics.mape(y_true, y_pred)),
+            "valid_rows": valid_rows,
+        }
+
+        # Coverage if interval columns exist
+        for lvl in confidence_levels:
+            lo_col = f"{m}-lo-{lvl}"
+            hi_col = f"{m}-hi-{lvl}"
+            if lo_col in cv_df.columns and hi_col in cv_df.columns:
+                cov = ForecastMetrics.coverage(
+                    y_true,
+                    cv_df[lo_col].to_numpy(),
+                    cv_df[hi_col].to_numpy(),
+                )
+                metrics[f"coverage_{lvl}"] = float(cov)
+
+        rows.append(metrics)
+
+    lb = pd.DataFrame(rows)
+    if lb.empty:
+        raise RuntimeError("[leaderboard] computed empty leaderboard (no usable model columns).")
+
+    # Fail-loud sorting: rmse NaNs should sort last
+    lb = lb.sort_values(["rmse"], ascending=True, na_position="last").reset_index(drop=True)
+    return lb
+
+
+def compute_baseline_metrics(
+    cv_df: pd.DataFrame,
+    *,
+    model_name: str,
+    threshold_k: float = 2.0,
+) -> dict:
+    """
+    Compute baseline metrics for drift detection from CV output.
+
+    We compute RMSE/MAE per (unique_id, cutoff) window, then aggregate:
+      rmse_mean, rmse_std, drift_threshold_rmse = mean + k*std
+
+    No imputation/filling: metrics are computed only from finite values.
+    """
+    required = {"unique_id", "cutoff", "y", model_name}
+    missing = required - set(cv_df.columns)
+    if missing:
+        raise ValueError(
+            f"[baseline] cv_df missing required columns for model '{model_name}': {sorted(missing)}"
+        )
+
+    # Compute per-window metrics (unique_id, cutoff)
+    def _window_metrics(g: pd.DataFrame) -> pd.Series:
+        yt = g["y"].to_numpy()
+        yp = g[model_name].to_numpy()
+        valid = np.isfinite(yt) & np.isfinite(yp)
+        if valid.sum() == 0:
+            return pd.Series({"rmse": np.nan, "mae": np.nan, "valid_rows": 0})
+        return pd.Series({
+            "rmse": ForecastMetrics.rmse(yt, yp),
+            "mae": ForecastMetrics.mae(yt, yp),
+            "valid_rows": int(valid.sum()),
+        })
+
+    per_window = (
+        cv_df.groupby(["unique_id", "cutoff"], sort=False, dropna=False)
+        .apply(_window_metrics)
+        .reset_index()
+    )
+
+    # Fail loud if baseline is entirely NaN
+    if per_window["rmse"].notna().sum() == 0:
+        sample_cols = ["unique_id", "cutoff", "y", model_name]
+        raise RuntimeError(
+            "[baseline] All per-window RMSE are NaN. "
+            "This usually means predictions or y are non-finite everywhere. "
+            f"Sample:\n{cv_df[sample_cols].head(20).to_string(index=False)}"
+        )
+
+    rmse_mean = float(per_window["rmse"].mean(skipna=True))
+    rmse_std = float(per_window["rmse"].std(skipna=True, ddof=0))
+    mae_mean = float(per_window["mae"].mean(skipna=True))
+    mae_std = float(per_window["mae"].std(skipna=True, ddof=0))
+
+    baseline = {
+        "model": model_name,
+        "rmse_mean": rmse_mean,
+        "rmse_std": rmse_std,
+        "mae_mean": mae_mean,
+        "mae_std": mae_std,
+        "drift_threshold_rmse": float(rmse_mean + threshold_k * rmse_std),
+        "drift_threshold_mae": float(mae_mean + threshold_k * mae_std),
+        "n_series": int(per_window["unique_id"].nunique()),
+        "n_windows": int(per_window["cutoff"].nunique()),
+        "per_window_rows": int(len(per_window)),
+    }
+
+    # Optional per-series baseline (useful later if you want drift per series)
+    per_series = (
+        per_window.groupby("unique_id")[["rmse", "mae"]]
+        .agg(rmse_mean=("rmse", "mean"), rmse_std=("rmse", lambda s: s.std(ddof=0)),
+             mae_mean=("mae", "mean"), mae_std=("mae", lambda s: s.std(ddof=0)))
+        .reset_index()
+    )
+    per_series["drift_threshold_rmse"] = per_series["rmse_mean"] + threshold_k * per_series["rmse_std"]
+    per_series["drift_threshold_mae"] = per_series["mae_mean"] + threshold_k * per_series["mae_std"]
+    baseline["per_series"] = per_series.to_dict(orient="records")
+
+    return baseline
+
+
 
 @dataclass
 class ForecastConfig:
@@ -356,7 +526,7 @@ class RenewableForecastModel:
         weather_df: Optional[pd.DataFrame] = None,
         n_windows: int = 3,
         step_size: int = 168,
-    ) -> pd.DataFrame:
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         from statsforecast import StatsForecast
         from statsforecast.models import AutoARIMA, SeasonalNaive, AutoETS, MSTL
 
@@ -370,7 +540,11 @@ class RenewableForecastModel:
         ]
         sf = StatsForecast(models=models, freq="h", n_jobs=-1)
 
-        print(f"[cv] windows={n_windows} step={step_size} h={self.horizon} rows={len(train_df)} series={train_df['unique_id'].nunique()}")
+        print(
+            f"[cv] windows={n_windows} step={step_size} h={self.horizon} "
+            f"rows={len(train_df)} series={train_df['unique_id'].nunique()}"
+        )
+
         cv = sf.cross_validation(
             df=train_df,
             h=self.horizon,
@@ -379,7 +553,9 @@ class RenewableForecastModel:
             level=list(self.confidence_levels),
         ).reset_index()
 
-        return cv
+        leaderboard = compute_leaderboard(cv, confidence_levels=self.confidence_levels)
+        return cv, leaderboard
+
 
 
 if __name__ == "__main__":

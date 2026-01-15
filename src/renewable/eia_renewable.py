@@ -11,10 +11,16 @@ from typing import Optional
 import pandas as pd
 import requests
 from dotenv import find_dotenv, load_dotenv
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 from src.renewable.regions import REGIONS, get_eia_respondent, validate_fuel_type, validate_region
 
 logger = logging.getLogger(__name__)
+
+def _sanitize_url(url: str) -> str:
+    parts = urlsplit(url)
+    q = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k.lower() != "api_key"]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(q), parts.fragment))
 
 
 def _load_env_once(*, debug: bool = False) -> Optional[str]:
@@ -132,6 +138,7 @@ class EIARenewableFetcher:
         end_date: str,
         *,
         debug: bool = False,
+        diag: Optional[dict] = None,
     ) -> pd.DataFrame:
         if not validate_region(region):
             raise ValueError(f"Invalid region: {region}")
@@ -163,11 +170,18 @@ class EIARenewableFetcher:
             payload = resp.json()
 
             records, meta = self._extract_eia_response(payload, request_url=resp.url)
+            page_count += 1
+            if total_hint is None:
+                total_hint = meta.get("total")
+
             returned = len(records)
 
             if debug:
-                print(f"[PAGE] region={region} fuel={fuel_type} returned={returned} offset={offset} total={meta.get('total')} url={resp.url}")
-
+                safe_url = _sanitize_url(resp.url)
+                print(
+                    f"[PAGE] region={region} fuel={fuel_type} returned={returned} "
+                    f"offset={offset} total={meta.get('total')} url={safe_url}"
+                )
             if returned == 0 and offset == 0:
                 return pd.DataFrame(columns=["ds", "value", "region", "fuel_type"])
             if returned == 0:
@@ -203,13 +217,17 @@ class EIARenewableFetcher:
 
         df = df.dropna(subset=["ds", "value"]).sort_values("ds").reset_index(drop=True)
 
-        if debug:
-            kept = len(df)
-            print(f"[PARSE] raw_rows={raw_rows} kept={kept} dropped_bad_ds={bad_ds} dropped_bad_value={bad_val}")
-            expected = pd.date_range(f"{start_date} 00:00", f"{end_date} 23:00", freq="h")
-            dup = int(df["ds"].duplicated().sum())
-            missing = int(len(expected.difference(df["ds"])))
-            print(f"[QC] expected_hours={len(expected)} actual_hours={len(df)} duplicates={dup} missing_hours={missing}")
+        if diag is not None:
+            diag.update({
+                "region": region,
+                "fuel_type": fuel_type,
+                "start_date": start_date,
+                "end_date": end_date,
+                "total_records": total_hint,
+                "pages": page_count,
+                "rows_parsed": int(len(df)),
+                "empty": bool(len(df) == 0),
+            })
 
         return df[["ds", "value", "region", "fuel_type"]]
 
@@ -220,25 +238,41 @@ class EIARenewableFetcher:
         end_date: str,
         regions: Optional[list[str]] = None,
         max_workers: int = 3,
+        diagnostics: Optional[list[dict]] = None,
     ) -> pd.DataFrame:
         if regions is None:
             regions = [r for r in REGIONS.keys() if r != "US48"]
 
         all_dfs: list[pd.DataFrame] = []
 
+        def _run_one(region: str) -> tuple[str, pd.DataFrame, dict]:
+            d: dict = {}
+            df = self.fetch_region(region, fuel_type, start_date, end_date, diag=d)
+            return region, df, d
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(self.fetch_region, region, fuel_type, start_date, end_date): region
-                for region in regions
-            }
+            futures = {executor.submit(_run_one, region): region for region in regions}
             for future in as_completed(futures):
                 region = futures[future]
                 try:
-                    df = future.result()
+                    _, df, d = future.result()
+                    if diagnostics is not None:
+                        diagnostics.append(d)
+
                     if len(df) > 0:
                         all_dfs.append(df)
                         print(f"[OK] {region}: {len(df)} rows")
+                    else:
+                        print(f"[EMPTY] {region}: 0 rows")
                 except Exception as e:
+                    if diagnostics is not None:
+                        diagnostics.append({
+                            "region": region,
+                            "fuel_type": fuel_type,
+                            "start_date": start_date,
+                            "end_date": end_date,
+                            "error": str(e),
+                        })
                     print(f"[FAIL] {region}: {e}")
 
         if not all_dfs:
@@ -276,3 +310,8 @@ if __name__ == "__main__":
 
     print("\n=== Series Summary ===")
     print(fetcher.get_series_summary(df_multi))
+
+    # sun checks:
+    f = EIARenewableFetcher()
+    df = f.fetch_region("CALI", "SUN", "2024-12-01", "2024-12-03", debug=True)
+    print(df.head(), len(df))

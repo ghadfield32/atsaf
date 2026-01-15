@@ -217,8 +217,54 @@ class OpenMeteoRenewable:
 
         return df
 
+    def fetch_for_region_forecast(
+        self,
+        region_code: str,
+        horizon_hours: int = 48,
+        variables: Optional[list[str]] = None,
+        *,
+        debug: bool = False,
+    ) -> pd.DataFrame:
+        if not validate_region(region_code):
+            raise ValueError(f"Invalid region_code: {region_code}")
 
-if __name__ == "__main__":
+        lat, lon = get_region_coords(region_code)
+        df = self.fetch_forecast(lat, lon, horizon_hours=horizon_hours, variables=variables, debug=debug)
+        df["region"] = region_code
+        return df
+
+
+    def fetch_all_regions_forecast(
+        self,
+        regions: list[str],
+        horizon_hours: int = 48,
+        variables: Optional[list[str]] = None,
+        *,
+        debug: bool = False,
+    ) -> pd.DataFrame:
+        all_dfs: list[pd.DataFrame] = []
+        for region in regions:
+            try:
+                df = self.fetch_for_region_forecast(
+                    region, horizon_hours=horizon_hours, variables=variables, debug=debug
+                )
+                all_dfs.append(df)
+                print(f"[OK] Forecast weather for {region}: {len(df)} rows")
+            except Exception as e:
+                print(f"[FAIL] Forecast weather for {region}: {e}")
+
+        if not all_dfs:
+            return pd.DataFrame()
+
+        return (
+            pd.concat(all_dfs, ignore_index=True)
+            .sort_values(["region", "ds"])
+            .reset_index(drop=True)
+        )
+
+
+
+if __name__ == "__main__": 
     # Real API smoke test (no key needed)
     weather = OpenMeteoRenewable(strict=True)
 

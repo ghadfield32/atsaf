@@ -331,9 +331,9 @@ def train_renewable_models(
         step_size=step_size,
     )
 
-    # Compute baseline for drift detection
     best_model = leaderboard.iloc[0]["model"]
     baseline = compute_baseline_metrics(cv_results, model_name=best_model)
+
 
     logger.info(f"[train_models] Best model: {best_model}, RMSE: {baseline['rmse_mean']:.1f}")
 
@@ -345,20 +345,10 @@ def generate_renewable_forecasts(
     generation_df: Optional[pd.DataFrame] = None,
     weather_df: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
-    """Task 4: Generate forecasts with prediction intervals.
-
-    Args:
-        config: Pipeline configuration
-        generation_df: Generation data (loads from file if None)
-        weather_df: Weather data (loads from file if None)
-
-    Returns:
-        DataFrame with forecasts [unique_id, ds, yhat, intervals...]
-    """
+    """Task 4: Generate forecasts with prediction intervals."""
     output_path = config.forecasts_path()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Load data if not provided
     if generation_df is None:
         generation_df = pd.read_parquet(config.generation_path())
     if weather_df is None:
@@ -366,21 +356,37 @@ def generate_renewable_forecasts(
 
     logger.info(f"[generate_forecasts] Generating {config.horizon}h forecasts")
 
+    # Ensure datetime types
+    generation_df = generation_df.copy()
+    generation_df["ds"] = pd.to_datetime(generation_df["ds"], errors="raise")
+    weather_df = weather_df.copy()
+    weather_df["ds"] = pd.to_datetime(weather_df["ds"], errors="raise")
+
     model = RenewableForecastModel(
         horizon=config.horizon,
         confidence_levels=config.confidence_levels,
     )
 
-    # Fit on all data
+    # Fit uses only historical generation timestamps, weather merge will fail-loud if missing.
     model.fit(generation_df, weather_df)
 
-    # Predict
-    forecasts = model.predict()
+    # Future weather must cover the horizon after the latest generation timestamp.
+    last_gen_ds = generation_df["ds"].max()
+    future_weather = weather_df[weather_df["ds"] > last_gen_ds].copy()
+
+    if future_weather.empty:
+        raise RuntimeError(
+            "[generate_forecasts] No future weather rows found after last generation timestamp. "
+            f"last_gen_ds={last_gen_ds}"
+        )
+
+    forecasts = model.predict(future_weather=future_weather)
 
     forecasts.to_parquet(output_path, index=False)
     logger.info(f"[generate_forecasts] Saved: {output_path} ({len(forecasts)} rows)")
 
     return forecasts
+
 
 
 def compute_renewable_drift(

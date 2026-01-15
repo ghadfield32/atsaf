@@ -56,6 +56,20 @@ REGIONS: dict[str, RegionInfo] = {
         timezone="America/Chicago",
         eia_respondent="MISO",
     ),
+    "PJM": RegionInfo(
+        name="PJM Interconnection",
+        lat=39.0,
+        lon=-77.0,
+        timezone="America/New_York",
+        eia_respondent="PJM",
+    ),
+    "SWPP": RegionInfo(
+        name="Southwest Power Pool",
+        lat=37.0,
+        lon=-97.0,
+        timezone="America/Chicago",
+        eia_respondent="SWPP",
+    ),
 
     # Internal/aggregate regions kept for non-EIA use (weather/features/etc.)
     "SE": RegionInfo(name="Southeast", lat=33.0, lon=-84.0, timezone="America/New_York", eia_respondent=None),

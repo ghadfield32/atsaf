@@ -264,7 +264,7 @@ class OpenMeteoRenewable:
 
 
 
-if __name__ == "__main__": 
+if __name__ == "__main__":
     # Real API smoke test (no key needed)
     weather = OpenMeteoRenewable(strict=True)
 

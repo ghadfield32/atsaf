@@ -1,23 +1,20 @@
-"""EIA region definitions with geographic coordinates.
+# src/renewable/regions.py
+from __future__ import annotations
 
-This module maps EIA balancing authority regions to their approximate
-geographic centroids for weather data lookup.
-"""
-
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 
 class RegionInfo(NamedTuple):
     """Region metadata for EIA and weather lookups."""
-
     name: str
     lat: float
     lon: float
     timezone: str
+    # Some internal regions may not map cleanly to an EIA respondent.
+    # We keep them in REGIONS for weather/features, but EIA fetch requires this.
+    eia_respondent: Optional[str] = None
 
 
-# EIA Balancing Authority regions with centroid coordinates
-# Coordinates are approximate centroids for weather API lookup
 REGIONS: dict[str, RegionInfo] = {
     # Western Interconnection
     "CALI": RegionInfo(
@@ -25,18 +22,21 @@ REGIONS: dict[str, RegionInfo] = {
         lat=36.7,
         lon=-119.4,
         timezone="America/Los_Angeles",
+        eia_respondent="CISO",
     ),
     "NW": RegionInfo(
         name="Northwest",
         lat=45.5,
         lon=-122.0,
         timezone="America/Los_Angeles",
+        eia_respondent=None,  # intentionally unset until verified
     ),
     "SW": RegionInfo(
         name="Southwest",
         lat=33.5,
         lon=-112.0,
         timezone="America/Phoenix",
+        eia_respondent=None,  # intentionally unset until verified
     ),
 
     # Texas Interconnection
@@ -45,146 +45,87 @@ REGIONS: dict[str, RegionInfo] = {
         lat=31.0,
         lon=-100.0,
         timezone="America/Chicago",
+        eia_respondent="ERCO",
     ),
 
-    # Eastern Interconnection - Northeast
-    "NE": RegionInfo(
-        name="New England ISO",
-        lat=42.3,
-        lon=-71.5,
-        timezone="America/New_York",
-    ),
-    "NY": RegionInfo(
-        name="New York ISO",
-        lat=42.5,
-        lon=-75.5,
-        timezone="America/New_York",
-    ),
-    "PJM": RegionInfo(
-        name="PJM Interconnection",
-        lat=40.0,
-        lon=-77.0,
-        timezone="America/New_York",
-    ),
-
-    # Eastern Interconnection - Midwest
+    # Midwest
     "MISO": RegionInfo(
         name="Midcontinent ISO",
         lat=41.0,
         lon=-93.0,
         timezone="America/Chicago",
-    ),
-    "SWPP": RegionInfo(
-        name="Southwest Power Pool",
-        lat=36.0,
-        lon=-97.0,
-        timezone="America/Chicago",
-    ),
-    "CENT": RegionInfo(
-        name="Central",
-        lat=39.0,
-        lon=-95.0,
-        timezone="America/Chicago",
+        eia_respondent="MISO",
     ),
 
-    # Eastern Interconnection - Southeast
-    "SE": RegionInfo(
-        name="Southeast",
-        lat=33.0,
-        lon=-84.0,
-        timezone="America/New_York",
-    ),
-    "FLA": RegionInfo(
-        name="Florida",
-        lat=28.0,
-        lon=-82.0,
-        timezone="America/New_York",
-    ),
-    "CAR": RegionInfo(
-        name="Carolinas",
-        lat=35.5,
-        lon=-80.0,
-        timezone="America/New_York",
-    ),
-    "TEN": RegionInfo(
-        name="Tennessee Valley",
-        lat=35.5,
-        lon=-86.0,
-        timezone="America/Chicago",
-    ),
+    # Internal/aggregate regions kept for non-EIA use (weather/features/etc.)
+    "SE": RegionInfo(name="Southeast", lat=33.0, lon=-84.0, timezone="America/New_York", eia_respondent=None),
+    "FLA": RegionInfo(name="Florida", lat=28.0, lon=-82.0, timezone="America/New_York", eia_respondent=None),
+    "CAR": RegionInfo(name="Carolinas", lat=35.5, lon=-80.0, timezone="America/New_York", eia_respondent=None),
+    "TEN": RegionInfo(name="Tennessee Valley", lat=35.5, lon=-86.0, timezone="America/Chicago", eia_respondent=None),
 
-    # Aggregates
-    "US48": RegionInfo(
-        name="Lower 48 States",
-        lat=39.8,
-        lon=-98.5,
-        timezone="America/Chicago",
-    ),
+    "US48": RegionInfo(name="Lower 48 States", lat=39.8, lon=-98.5, timezone="America/Chicago", eia_respondent=None),
 }
 
-# Fuel type codes for renewable generation
-FUEL_TYPES = {
-    "WND": "Wind",
-    "SUN": "Solar",
-}
-
-
-def get_region_coords(region_code: str) -> tuple[float, float]:
-    """Return (lat, lon) for weather API lookup.
-
-    Args:
-        region_code: EIA region code (e.g., 'CALI', 'ERCO')
-
-    Returns:
-        Tuple of (latitude, longitude)
-
-    Raises:
-        KeyError: If region_code is not found
-    """
-    region = REGIONS[region_code]
-    return (region.lat, region.lon)
+FUEL_TYPES = {"WND": "Wind", "SUN": "Solar"}
 
 
 def list_regions() -> list[str]:
-    """Return all valid region codes.
-
-    Returns:
-        List of region codes sorted alphabetically
-    """
     return sorted(REGIONS.keys())
 
 
 def get_region_info(region_code: str) -> RegionInfo:
-    """Get full region information.
-
-    Args:
-        region_code: EIA region code
-
-    Returns:
-        RegionInfo named tuple with name, lat, lon, timezone
-    """
     return REGIONS[region_code]
 
 
+def get_region_coords(region_code: str) -> tuple[float, float]:
+    r = REGIONS[region_code]
+    return (r.lat, r.lon)
+
+
+def get_eia_respondent(region_code: str) -> str:
+    """Return the code EIA expects for facets[respondent][]. Fail loudly if missing."""
+    info = REGIONS[region_code]
+    if not info.eia_respondent:
+        raise ValueError(
+            f"Region '{region_code}' has no configured eia_respondent. "
+            f"Set REGIONS['{region_code}'].eia_respondent to a verified EIA respondent code "
+            f"before using it for EIA fetches."
+        )
+    return info.eia_respondent
+
+
 def validate_region(region_code: str) -> bool:
-    """Check if region code is valid.
-
-    Args:
-        region_code: Region code to validate
-
-    Returns:
-        True if valid, False otherwise
-    """
     return region_code in REGIONS
 
 
 def validate_fuel_type(fuel_type: str) -> bool:
-    """Check if fuel type code is valid.
-
-    Args:
-        fuel_type: Fuel type code (WND, SUN)
-
-    Returns:
-        True if valid, False otherwise
-    """
     return fuel_type in FUEL_TYPES
+
+
+
+if __name__ == "__main__":
+    # Example run - test region functions
+
+    print("=== Available Regions ===")
+    print(f"Total regions: {len(REGIONS)}")
+    print(f"Region codes: {list_regions()}")
+
+    print("\n=== Example: California ===")
+    cali_info = get_region_info("CALI")
+    print(f"Name: {cali_info.name}")
+    print(f"Coordinates: ({cali_info.lat}, {cali_info.lon})")
+    print(f"Timezone: {cali_info.timezone}")
+
+    print("\n=== Weather API Coordinates ===")
+    for region in ["CALI", "ERCO", "MISO"]:
+        lat, lon = get_region_coords(region)
+        print(f"{region}: lat={lat}, lon={lon}")
+
+    print("\n=== Fuel Types ===")
+    for code, name in FUEL_TYPES.items():
+        print(f"{code}: {name}")
+
+    print("\n=== Validation ===")
+    print(f"validate_region('CALI'): {validate_region('CALI')}")
+    print(f"validate_region('INVALID'): {validate_region('INVALID')}")
+    print(f"validate_fuel_type('WND'): {validate_fuel_type('WND')}")

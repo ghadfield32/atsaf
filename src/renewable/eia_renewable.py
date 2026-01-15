@@ -1,69 +1,128 @@
-"""EIA renewable energy data fetcher for multi-series forecasting.
-
-This module fetches wind (WND) and solar (SUN) generation data from the EIA API
-for multiple regions, outputting data in StatsForecast format [unique_id, ds, y].
-"""
+# src/renewable/eia_renewable.py
+from __future__ import annotations
 
 import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 import requests
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
-from src.renewable.regions import FUEL_TYPES, REGIONS, validate_fuel_type, validate_region
-
-load_dotenv()
+from src.renewable.regions import REGIONS, get_eia_respondent, validate_fuel_type, validate_region
 
 logger = logging.getLogger(__name__)
 
 
-def _safe_int(value: object) -> Optional[int]:
+def _load_env_once(*, debug: bool = False) -> Optional[str]:
+    """
+    Load .env if present.
+    - Primary: find_dotenv(usecwd=True) (walk up from CWD)
+    - Fallback: repo_root/.env based on this file location
+    Returns the path loaded (or None).
+    """
+    # 1) Try from current working directory upward
+    dotenv_path = find_dotenv(usecwd=True)
+    if dotenv_path:
+        load_dotenv(dotenv_path, override=False)
+        if debug:
+            logger.info("Loaded .env via find_dotenv: %s", dotenv_path)
+        return dotenv_path
+
+    # 2) Fallback: assume src-layout -> repo root is ../../ from this file
     try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+        repo_root = Path(__file__).resolve().parents[2]
+        fallback = repo_root / ".env"
+        if fallback.exists():
+            load_dotenv(fallback, override=False)
+            if debug:
+                logger.info("Loaded .env via fallback: %s", str(fallback))
+            return str(fallback)
+    except Exception:
+        pass
+
+    if debug:
+        logger.info("No .env found to load.")
+    return None
 
 
 class EIARenewableFetcher:
-    """Fetch wind/solar data for multiple regions from EIA API.
-
-    Outputs data in StatsForecast multi-series format:
-    - unique_id: "{region}_{fuel_type}" (e.g., "CALI_WND")
-    - ds: timezone-naive UTC datetime
-    - y: generation value (MWh)
-
-    Example:
-        >>> fetcher = EIARenewableFetcher(api_key="your_key")
-        >>> df = fetcher.fetch_all_regions(
-        ...     fuel_type="WND",
-        ...     start_date="2024-01-01",
-        ...     end_date="2024-01-07"
-        ... )
-        >>> print(df["unique_id"].unique())
-        ['CALI_WND', 'ERCO_WND', 'MISO_WND', ...]
-    """
-
     BASE_URL = "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/"
     MAX_RECORDS_PER_REQUEST = 5000
     RATE_LIMIT_DELAY = 0.2  # 5 requests/second max
 
-    def __init__(self, api_key: Optional[str] = None):
-        """Initialize the fetcher with API credentials.
-
-        Args:
-            api_key: EIA API key. If None, reads from EIA_API_KEY env var.
+    def __init__(self, api_key: Optional[str] = None, *, debug_env: bool = False):
         """
+        Initialize API key. Pulls from:
+        1) explicit api_key argument
+        2) environment variable EIA_API_KEY (optionally loaded from .env)
+        """
+        loaded_env = _load_env_once(debug=debug_env)
+
         self.api_key = api_key or os.getenv("EIA_API_KEY")
         if not self.api_key:
             raise ValueError(
-                "EIA API key required. Set EIA_API_KEY environment variable "
-                "or pass api_key parameter."
+                "EIA API key required but not found.\n"
+                "- Ensure .env contains EIA_API_KEY=...\n"
+                "- Ensure your process CWD is under the repo (so find_dotenv can locate it), OR\n"
+                "- Pass api_key=... explicitly.\n"
+                f"Loaded .env path: {loaded_env}"
             )
-        logger.info(f"EIARenewableFetcher initialized (API key length: {len(self.api_key)})")
+
+        # Debug without leaking the key
+        if debug_env:
+            masked = self.api_key[:4] + "..." + self.api_key[-4:] if len(self.api_key) >= 8 else "***"
+            logger.info("EIA_API_KEY loaded (masked): %s", masked)
+
+    @staticmethod
+    def _extract_eia_response(payload: dict, *, request_url: Optional[str] = None) -> tuple[list[dict], dict]:
+        if not isinstance(payload, dict):
+            raise TypeError(f"EIA payload is not a dict. type={type(payload)} url={request_url}")
+
+        if "error" in payload and payload.get("response") is None:
+            raise ValueError(f"EIA returned error payload. url={request_url} error={payload.get('error')}")
+
+        if "response" not in payload:
+            raise ValueError(
+                f"EIA payload missing 'response'. url={request_url} keys={list(payload.keys())[:25]}"
+            )
+
+        response = payload.get("response") or {}
+        if not isinstance(response, dict):
+            raise TypeError(f"EIA payload['response'] is not a dict. type={type(response)} url={request_url}")
+
+        if "data" not in response:
+            raise ValueError(
+                f"EIA response missing 'data'. url={request_url} response_keys={list(response.keys())[:25]}"
+            )
+
+        records = response.get("data") or []
+        if not isinstance(records, list):
+            raise TypeError(f"EIA response['data'] is not a list. type={type(records)} url={request_url}")
+
+        total = response.get("total", None)
+        offset = response.get("offset", None)
+
+        meta_obj = response.get("metadata") or {}
+        if isinstance(meta_obj, dict):
+            if total is None and "total" in meta_obj:
+                total = meta_obj.get("total")
+            if offset is None and "offset" in meta_obj:
+                offset = meta_obj.get("offset")
+
+        try:
+            total = int(total) if total is not None else None
+        except Exception:
+            pass
+        try:
+            offset = int(offset) if offset is not None else None
+        except Exception:
+            pass
+
+        return records, {"total": total, "offset": offset}
 
     def fetch_region(
         self,
@@ -71,63 +130,24 @@ class EIARenewableFetcher:
         fuel_type: str,
         start_date: str,
         end_date: str,
-        diagnostics: Optional[list[dict]] = None,
+        *,
+        debug: bool = False,
     ) -> pd.DataFrame:
-        """Fetch data for a single region and fuel type.
-
-        Args:
-            region: EIA region code (e.g., 'CALI', 'ERCO')
-            fuel_type: 'WND' for wind or 'SUN' for solar
-            start_date: Start date (YYYY-MM-DD)
-            end_date: End date (YYYY-MM-DD)
-            diagnostics: Optional list to capture request/response metadata
-
-        Returns:
-            DataFrame with columns [ds, value, region, fuel_type]
-
-        Raises:
-            ValueError: If region or fuel_type is invalid
-            requests.HTTPError: If API request fails
-        """
         if not validate_region(region):
-            raise ValueError(f"Invalid region: {region}. Valid: {list(REGIONS.keys())}")
+            raise ValueError(f"Invalid region: {region}")
         if not validate_fuel_type(fuel_type):
-            raise ValueError(f"Invalid fuel type: {fuel_type}. Valid: {list(FUEL_TYPES.keys())}")
+            raise ValueError(f"Invalid fuel type: {fuel_type}")
 
-        all_records = []
+        respondent = get_eia_respondent(region)
+
+        all_records: list[dict] = []
         offset = 0
-        last_response_meta: Optional[dict] = None
-        request_pages: list[dict] = []
-        invalid_response = False
-        total_count: Optional[int] = None
-
-        def _append_diagnostics(df: pd.DataFrame) -> None:
-            if diagnostics is None:
-                return
-            min_ds = df["ds"].min() if "ds" in df.columns and not df.empty else None
-            max_ds = df["ds"].max() if "ds" in df.columns and not df.empty else None
-            diagnostics.append(
-                {
-                    "region": region,
-                    "fuel_type": fuel_type,
-                    "requested_start": start_date,
-                    "requested_end": end_date,
-                    "total_records": total_count,
-                    "pages": request_pages,
-                    "row_count": int(len(df)),
-                    "empty": df.empty,
-                    "invalid_response": invalid_response,
-                    "min_ds": min_ds,
-                    "max_ds": max_ds,
-                    "last_response_meta": last_response_meta,
-                }
-            )
 
         while True:
             params = {
                 "api_key": self.api_key,
                 "data[]": "value",
-                "facets[respondent][]": region,
+                "facets[respondent][]": respondent,
                 "facets[fueltype][]": fuel_type,
                 "frequency": "hourly",
                 "start": f"{start_date}T00",
@@ -137,99 +157,59 @@ class EIARenewableFetcher:
                 "sort[0][column]": "period",
                 "sort[0][direction]": "asc",
             }
-            request_meta = {
-                "respondent": region,
-                "fuel_type": fuel_type,
-                "start": start_date,
-                "end": end_date,
-                "offset": offset,
-                "length": self.MAX_RECORDS_PER_REQUEST,
-                "frequency": "hourly",
-            }
 
-            response = requests.get(self.BASE_URL, params=params, timeout=30)
-            response.raise_for_status()
+            resp = requests.get(self.BASE_URL, params=params, timeout=30)
+            resp.raise_for_status()
+            payload = resp.json()
 
-            data = response.json()
+            records, meta = self._extract_eia_response(payload, request_url=resp.url)
+            returned = len(records)
 
-            if not self._validate_response(data):
-                invalid_response = True
-                logger.warning(
-                    f"Invalid response for {region}/{fuel_type}. "
-                    f"request={request_meta}"
-                )
-                break
+            if debug:
+                print(f"[PAGE] region={region} fuel={fuel_type} returned={returned} offset={offset} total={meta.get('total')} url={resp.url}")
 
-            records = data["response"]["data"]
-            response_info = data.get("response", {})
-            total_count = _safe_int(response_info.get("total"))
-            last_response_meta = {
-                "total": response_info.get("total"),
-                "returned": len(records),
-                "offset": offset,
-                "start": start_date,
-                "end": end_date,
-            }
-            request_pages.append(
-                {
-                    "offset": offset,
-                    "returned": len(records),
-                    "total": total_count,
-                    "start": start_date,
-                    "end": end_date,
-                }
-            )
-            if not records:
-                logger.warning(
-                    f"No records in response for {region}/{fuel_type} "
-                    f"(total={last_response_meta['total']}, offset={offset}, "
-                    f"start={start_date}, end={end_date})"
-                )
+            if returned == 0 and offset == 0:
+                return pd.DataFrame(columns=["ds", "value", "region", "fuel_type"])
+            if returned == 0:
                 break
 
             all_records.extend(records)
-            offset += self.MAX_RECORDS_PER_REQUEST
 
-            # Rate limiting
-            time.sleep(self.RATE_LIMIT_DELAY)
-            if total_count is not None and offset >= total_count:
-                logger.info(
-                    f"Reached total records for {region}/{fuel_type} "
-                    f"(total={total_count}, fetched={len(all_records)})."
-                )
+            if returned < self.MAX_RECORDS_PER_REQUEST:
                 break
 
-        if not all_records:
-            logger.warning(f"No data returned for {region}/{fuel_type}")
-            if last_response_meta is not None:
-                logger.warning(
-                    f"Response meta for {region}/{fuel_type}: {last_response_meta}"
-                )
-            empty_df = pd.DataFrame(columns=["ds", "value", "region", "fuel_type"])
-            _append_diagnostics(empty_df)
-            return empty_df
+            offset += self.MAX_RECORDS_PER_REQUEST
+            time.sleep(self.RATE_LIMIT_DELAY)
 
         df = pd.DataFrame(all_records)
 
-        # Parse datetime
-        df["ds"] = pd.to_datetime(df["period"], errors="coerce")
+        missing_cols = [c for c in ["period", "value"] if c not in df.columns]
+        if missing_cols:
+            sample_keys = sorted(set().union(*(r.keys() for r in all_records[:5]))) if all_records else []
+            raise ValueError(
+                f"EIA records missing expected keys {missing_cols}. "
+                f"columns={df.columns.tolist()} sample_record_keys={sample_keys}"
+            )
+
+        raw_rows = len(df)
+        df["ds"] = pd.to_datetime(df["period"], utc=True, errors="coerce").dt.tz_convert("UTC").dt.tz_localize(None)
         df["value"] = pd.to_numeric(df["value"], errors="coerce")
+
+        bad_ds = int(df["ds"].isna().sum())
+        bad_val = int(df["value"].isna().sum())
+
         df["region"] = region
         df["fuel_type"] = fuel_type
 
-        # Drop rows with parsing errors
-        df = df.dropna(subset=["ds", "value"])
+        df = df.dropna(subset=["ds", "value"]).sort_values("ds").reset_index(drop=True)
 
-        # Convert to UTC naive (StatsForecast requirement)
-        if df["ds"].dt.tz is not None:
-            df["ds"] = df["ds"].dt.tz_convert("UTC").dt.tz_localize(None)
-
-        # Sort by datetime
-        df = df.sort_values("ds").reset_index(drop=True)
-
-        logger.info(f"Fetched {len(df)} rows for {region}/{fuel_type}")
-
-        _append_diagnostics(df)
+        if debug:
+            kept = len(df)
+            print(f"[PARSE] raw_rows={raw_rows} kept={kept} dropped_bad_ds={bad_ds} dropped_bad_value={bad_val}")
+            expected = pd.date_range(f"{start_date} 00:00", f"{end_date} 23:00", freq="h")
+            dup = int(df["ds"].duplicated().sum())
+            missing = int(len(expected.difference(df["ds"])))
+            print(f"[QC] expected_hours={len(expected)} actual_hours={len(df)} duplicates={dup} missing_hours={missing}")
 
         return df[["ds", "value", "region", "fuel_type"]]
 
@@ -240,225 +220,59 @@ class EIARenewableFetcher:
         end_date: str,
         regions: Optional[list[str]] = None,
         max_workers: int = 3,
-        diagnostics: Optional[list[dict]] = None,
     ) -> pd.DataFrame:
-        """Fetch data for all regions, return in StatsForecast format.
-
-        Args:
-            fuel_type: 'WND' for wind or 'SUN' for solar
-            start_date: Start date (YYYY-MM-DD)
-            end_date: End date (YYYY-MM-DD)
-            regions: List of region codes. If None, uses all regions except US48.
-            max_workers: Number of parallel workers (default: 3 for rate limiting)
-            diagnostics: Optional list to capture request/response metadata
-
-        Returns:
-            DataFrame with columns [unique_id, ds, y] in StatsForecast format.
-            unique_id format: "{region}_{fuel_type}" (e.g., "CALI_WND")
-        """
-        if not validate_fuel_type(fuel_type):
-            raise ValueError(f"Invalid fuel type: {fuel_type}")
-
-        # Default to all regions except US48 (aggregate)
         if regions is None:
             regions = [r for r in REGIONS.keys() if r != "US48"]
 
-        logger.info(
-            f"Fetching {fuel_type} for {len(regions)} regions: {regions} "
-            f"(start={start_date}, end={end_date})"
-        )
+        all_dfs: list[pd.DataFrame] = []
 
-        all_dfs = []
-        failed_regions = []
-        empty_regions = []
-
-        # Fetch regions with controlled parallelism
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_region = {
-                executor.submit(
-                    self.fetch_region,
-                    region,
-                    fuel_type,
-                    start_date,
-                    end_date,
-                    diagnostics,
-                ): region
+            futures = {
+                executor.submit(self.fetch_region, region, fuel_type, start_date, end_date): region
                 for region in regions
             }
-
-            for future in as_completed(future_to_region):
-                region = future_to_region[future]
+            for future in as_completed(futures):
+                region = futures[future]
                 try:
                     df = future.result()
                     if len(df) > 0:
                         all_dfs.append(df)
-                        logger.info(f"[OK] {region}: {len(df)} rows")
-                    else:
-                        logger.warning(f"[EMPTY] {region}: no data")
-                        empty_regions.append(region)
+                        print(f"[OK] {region}: {len(df)} rows")
                 except Exception as e:
-                    logger.error(f"[FAIL] {region}: {e}")
-                    failed_regions.append(region)
+                    print(f"[FAIL] {region}: {e}")
 
         if not all_dfs:
-            logger.error("No data retrieved from any region")
             return pd.DataFrame(columns=["unique_id", "ds", "y"])
 
-        # Combine all regions
         combined = pd.concat(all_dfs, ignore_index=True)
-
-        # Create unique_id for StatsForecast format
         combined["unique_id"] = combined["region"] + "_" + combined["fuel_type"]
-
-        # Rename to StatsForecast convention
         combined = combined.rename(columns={"value": "y"})
-
-        # Select and order columns
-        result = combined[["unique_id", "ds", "y"]].copy()
-
-        # Sort by unique_id and ds
-        result = result.sort_values(["unique_id", "ds"]).reset_index(drop=True)
-
-        logger.info(
-            f"Combined dataset: {len(result)} rows, "
-            f"{result['unique_id'].nunique()} series, "
-            f"{len(failed_regions)} failed regions, "
-            f"{len(empty_regions)} empty regions"
-        )
-
-        if failed_regions:
-            logger.warning(f"Failed regions: {failed_regions}")
-        if empty_regions:
-            logger.warning(f"Empty regions: {empty_regions}")
-
-        return result
-
-    def fetch_both_fuel_types(
-        self,
-        start_date: str,
-        end_date: str,
-        regions: Optional[list[str]] = None,
-    ) -> pd.DataFrame:
-        """Fetch both wind and solar data for all regions.
-
-        Args:
-            start_date: Start date (YYYY-MM-DD)
-            end_date: End date (YYYY-MM-DD)
-            regions: List of region codes. If None, uses all regions except US48.
-
-        Returns:
-            DataFrame with columns [unique_id, ds, y] containing both WND and SUN.
-            unique_id examples: "CALI_WND", "CALI_SUN", "ERCO_WND", etc.
-        """
-        dfs = []
-
-        for fuel_type in ["WND", "SUN"]:
-            logger.info(f"Fetching {fuel_type} data...")
-            df = self.fetch_all_regions(
-                fuel_type=fuel_type,
-                start_date=start_date,
-                end_date=end_date,
-                regions=regions,
-            )
-            dfs.append(df)
-
-        combined = pd.concat(dfs, ignore_index=True)
-        combined = combined.sort_values(["unique_id", "ds"]).reset_index(drop=True)
-
-        logger.info(
-            f"Combined WND+SUN: {len(combined)} rows, "
-            f"{combined['unique_id'].nunique()} series"
-        )
-
-        return combined
-
-    def _validate_response(self, data: dict) -> bool:
-        """Validate API response structure.
-
-        Args:
-            data: Parsed JSON response
-
-        Returns:
-            True if response is valid, False otherwise
-        """
-        if not isinstance(data, dict):
-            return False
-
-        if "response" not in data:
-            return False
-
-        if "data" not in data["response"]:
-            return False
-
-        return True
-
-    def get_date_range(self, df: pd.DataFrame) -> tuple[str, str]:
-        """Get the date range of a dataset.
-
-        Args:
-            df: DataFrame with 'ds' column
-
-        Returns:
-            Tuple of (min_date, max_date) as strings
-        """
-        min_date = df["ds"].min().strftime("%Y-%m-%d")
-        max_date = df["ds"].max().strftime("%Y-%m-%d")
-        return (min_date, max_date)
+        return combined[["unique_id", "ds", "y"]].sort_values(["unique_id", "ds"]).reset_index(drop=True)
 
     def get_series_summary(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Get summary statistics per series.
-
-        Args:
-            df: DataFrame in StatsForecast format [unique_id, ds, y]
-
-        Returns:
-            DataFrame with summary stats per unique_id
-        """
-        summary = df.groupby("unique_id").agg(
+        return df.groupby("unique_id").agg(
             count=("y", "count"),
             min_value=("y", "min"),
             max_value=("y", "max"),
             mean_value=("y", "mean"),
-            std_value=("y", "std"),
-            min_date=("ds", "min"),
-            max_date=("ds", "max"),
             zero_count=("y", lambda x: (x == 0).sum()),
         ).reset_index()
 
-        summary["zero_pct"] = (summary["zero_count"] / summary["count"] * 100).round(1)
-
-        return summary
-
 
 if __name__ == "__main__":
-    # Test the fetcher
     logging.basicConfig(level=logging.INFO)
 
-    fetcher = EIARenewableFetcher()
+    fetcher = EIARenewableFetcher(debug_env=True)
 
-    # Test single region
-    print("\n=== Testing single region fetch ===")
-    df_single = fetcher.fetch_region(
-        region="CALI",
-        fuel_type="WND",
-        start_date="2024-12-01",
-        end_date="2024-12-07",
-    )
+    print("=== Testing Single Region Fetch ===")
+    df_single = fetcher.fetch_region("CALI", "WND", "2024-12-01", "2024-12-03", debug=True)
     print(f"Single region: {len(df_single)} rows")
     print(df_single.head())
 
-    # Test multi-region
-    print("\n=== Testing multi-region fetch ===")
-    df_multi = fetcher.fetch_all_regions(
-        fuel_type="WND",
-        start_date="2024-12-01",
-        end_date="2024-12-07",
-        regions=["CALI", "ERCO", "MISO"],
-    )
-    print(f"Multi-region: {len(df_multi)} rows")
-    print(f"Series: {df_multi['unique_id'].unique()}")
+    print("\n=== Testing Multi-Region Fetch ===")
+    df_multi = fetcher.fetch_all_regions("WND", "2024-12-01", "2024-12-03", regions=["CALI", "ERCO", "MISO"])
+    print(f"\nMulti-region: {len(df_multi)} rows")
+    print(f"Series: {df_multi['unique_id'].unique().tolist()}")
 
-    # Summary
-    print("\n=== Series summary ===")
-    summary = fetcher.get_series_summary(df_multi)
-    print(summary)
+    print("\n=== Series Summary ===")
+    print(fetcher.get_series_summary(df_multi))

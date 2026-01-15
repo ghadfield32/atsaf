@@ -59,6 +59,7 @@ dependencies = [
     "streamlit>=1.30.0",          # Dashboard UI
     "pydantic-settings>=2.0.0",   # Type-safe configuration
     "protobuf>=4.21,<7",
+    "ipykernel>=6.0.0",            # IPython kernel for Jupyter
 
 ]
 

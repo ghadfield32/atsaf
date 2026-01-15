@@ -1,622 +1,413 @@
-"""Probabilistic forecasting model for renewable energy generation.
+# file: src/renewable/modeling.py
 
-This module provides multi-series probabilistic forecasting with:
-- Weather exogenous features
-- Dual prediction intervals (80%, 95%)
-- Zero-value safe metrics (no MAPE for solar)
-"""
-
-import logging
-import os
-from dataclasses import dataclass, field
-from typing import Optional
+from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from dataclasses import dataclass
+from typing import Optional, Sequence
 
 from src.chapter2.evaluation import ForecastMetrics
 
-logger = logging.getLogger(__name__)
+
+WEATHER_VARS = [
+    "temperature_2m",
+    "wind_speed_10m",
+    "wind_speed_100m",
+    "wind_direction_10m",
+    "direct_radiation",
+    "diffuse_radiation",
+    "cloud_cover",
+]
 
 
-def _log_value_columns_summary(
-    df: pd.DataFrame,
-    value_cols: list[str],
-    label: str,
-) -> None:
-    """Log min/max/negative/missing counts for multiple value columns."""
-    if df is None or df.empty:
-        logger.warning(f"[{label}] Empty dataframe; no diagnostics.")
+def _log_series_summary(df: pd.DataFrame, *, value_col: str = "y", label: str = "series") -> None:
+    if df.empty:
+        print(f"[{label}] EMPTY")
         return
 
-    for col in value_cols:
-        if col not in df.columns:
-            logger.warning(f"[{label}] Missing column: {col}")
-            continue
+    tmp = df.copy()
+    tmp["ds"] = pd.to_datetime(tmp["ds"], errors="coerce")
 
-        series = df[col]
-        missing = int(series.isna().sum())
-        neg_count = int((series < 0).sum())
-        min_val = series.min()
-        max_val = series.max()
+    def _mode_delta_hours(g: pd.Series) -> float:
+        d = g.sort_values().diff().dropna()
+        if d.empty:
+            return float("nan")
+        return float(d.dt.total_seconds().div(3600).mode().iloc[0])
 
-        msg = (
-            f"[{label}] {col}: min={min_val}, max={max_val}, "
-            f"negatives={neg_count}, missing={missing}"
+    g = tmp.groupby("unique_id").agg(
+        rows=(value_col, "count"),
+        na_y=(value_col, lambda s: int(s.isna().sum())),
+        min_ds=("ds", "min"),
+        max_ds=("ds", "max"),
+        min_y=(value_col, "min"),
+        max_y=(value_col, "max"),
+        mean_y=(value_col, "mean"),
+        zero_y=(value_col, lambda s: int((s == 0).sum())),
+        mode_delta_hours=("ds", _mode_delta_hours),
+    ).reset_index().sort_values("unique_id")
+
+    print(f"[{label}] series={g['unique_id'].nunique()} rows={len(tmp)}")
+    print(g.head(20).to_string(index=False))
+
+def _missing_hour_blocks(ds: pd.Series) -> list[tuple[pd.Timestamp, pd.Timestamp, int]]:
+    """
+    Return contiguous blocks of missing hourly timestamps.
+    Each tuple: (block_start, block_end, n_hours)
+    """
+    ds = pd.to_datetime(ds, errors="raise").sort_values()
+    start, end = ds.iloc[0], ds.iloc[-1]
+    expected = pd.date_range(start, end, freq="h")
+    missing = expected.difference(ds)
+
+    if missing.empty:
+        return []
+
+    blocks = []
+    block_start = missing[0]
+    prev = missing[0]
+    for t in missing[1:]:
+        if t - prev == pd.Timedelta(hours=1):
+            prev = t
+        else:
+            n = int((prev - block_start).total_seconds() / 3600) + 1
+            blocks.append((block_start, prev, n))
+            block_start = t
+            prev = t
+    n = int((prev - block_start).total_seconds() / 3600) + 1
+    blocks.append((block_start, prev, n))
+    return blocks
+
+
+def _hourly_grid_report(df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for uid, g in df.groupby("unique_id"):
+        g = g.sort_values("ds")
+        start, end = g["ds"].iloc[0], g["ds"].iloc[-1]
+        expected = pd.date_range(start, end, freq="h")
+        missing = expected.difference(g["ds"])
+        blocks = _missing_hour_blocks(g["ds"])
+
+        rows.append(
+            {
+                "unique_id": uid,
+                "start": start,
+                "end": end,
+                "expected_hours": int(len(expected)),
+                "actual_hours": int(len(g)),
+                "missing_hours": int(len(missing)),
+                "missing_ratio": float(len(missing) / max(len(expected), 1)),
+                "n_missing_blocks": int(len(blocks)),
+                "largest_missing_block_hours": int(max([b[2] for b in blocks], default=0)),
+                "first_missing_block_start": blocks[0][0] if blocks else pd.NaT,
+                "first_missing_block_end": blocks[0][1] if blocks else pd.NaT,
+            }
+        )
+    return pd.DataFrame(rows).sort_values(["missing_ratio", "missing_hours"], ascending=False)
+
+
+def _enforce_hourly_grid(
+    df: pd.DataFrame,
+    *,
+    label: str,
+    policy: str = "raise",  # "raise" | "drop_incomplete_series"
+) -> pd.DataFrame:
+    """
+    Enforce hourly continuity without imputation.
+    - raise: fail loud with detailed report
+    - drop_incomplete_series: drop series that have missing hours (log what was dropped)
+    """
+    rep = _hourly_grid_report(df)
+    worst = rep.iloc[0].to_dict()
+
+    if worst["missing_hours"] == 0:
+        return df
+
+    print(f"[{label}][GRID] report (top):\n{rep.head(10).to_string(index=False)}")
+
+    if policy == "drop_incomplete_series":
+        bad_uids = rep.loc[rep["missing_hours"] > 0, "unique_id"].tolist()
+        kept = df.loc[~df["unique_id"].isin(bad_uids)].copy()
+        print(f"[{label}][GRID] policy=drop_incomplete_series dropped={bad_uids} kept_series={kept['unique_id'].nunique()}")
+        if kept.empty:
+            raise RuntimeError(f"[{label}][GRID] all series dropped due to missing hours")
+        return kept
+
+    # default: raise
+    worst_uid = worst["unique_id"]
+    g = df[df["unique_id"] == worst_uid].sort_values("ds")
+    blocks = _missing_hour_blocks(g["ds"])
+    sample_blocks = blocks[:3]
+    raise RuntimeError(
+        f"[{label}][GRID] Missing hours detected (no imputation). "
+        f"worst_unique_id={worst_uid} missing_hours={worst['missing_hours']} "
+        f"missing_ratio={worst['missing_ratio']:.3f} blocks(sample)={sample_blocks}"
+    )
+
+def _validate_hourly_grid_fail_loud(
+    df: pd.DataFrame,
+    *,
+    max_missing_ratio: float = 0.0,
+    label: str = "generation",
+) -> None:
+    # Keep your original basic checks:
+    if df.empty:
+        raise RuntimeError(f"[{label}] empty dataframe")
+
+    bad = df["ds"].isna().sum()
+    if bad:
+        raise RuntimeError(f"[{label}] ds has NaT values bad={int(bad)}")
+
+    dup = df.duplicated(subset=["unique_id", "ds"]).sum()
+    if dup:
+        raise RuntimeError(f"[{label}] duplicate (unique_id, ds) rows dup={int(dup)}")
+
+    rep = _hourly_grid_report(df)
+    worst = rep.iloc[0].to_dict()
+    if worst["missing_ratio"] > max_missing_ratio:
+        print(f"[{label}][GRID] report (top):\n{rep.head(10).to_string(index=False)}")
+        worst_uid = worst["unique_id"]
+        g = df[df["unique_id"] == worst_uid].sort_values("ds")
+        blocks = _missing_hour_blocks(g["ds"])
+        raise RuntimeError(
+            f"[{label}][GRID] Missing hours detected (no imputation allowed). "
+            f"unique_id={worst_uid} missing_hours={worst['missing_hours']} "
+            f"missing_ratio={worst['missing_ratio']:.3f} blocks(sample)={blocks[:3]}"
         )
 
-        if neg_count > 0 or missing > 0:
-            logger.warning(msg)
-        else:
-            logger.info(msg)
 
 
-def _log_series_summary(
-    df: pd.DataFrame,
-    value_col: str,
-    label: str,
-    id_col: str = "unique_id",
-    sample_rows: int = 3,
-    max_series_log: int = 25,
-) -> None:
-    """Log per-series summary and sample negative rows to surface data issues."""
-    if df is None or df.empty:
-        logger.warning(f"[{label}] Empty dataframe; no diagnostics.")
-        return
+def _add_time_features(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["hour"] = out["ds"].dt.hour
+    out["dow"] = out["ds"].dt.dayofweek
 
-    if value_col not in df.columns:
-        logger.warning(f"[{label}] Missing column: {value_col}")
-        return
+    out["hour_sin"] = np.sin(2 * np.pi * out["hour"] / 24)
+    out["hour_cos"] = np.cos(2 * np.pi * out["hour"] / 24)
 
-    missing = int(df[value_col].isna().sum())
-    if missing > 0:
-        logger.warning(f"[{label}] {value_col} has {missing} missing values")
+    out["dow_sin"] = np.sin(2 * np.pi * out["dow"] / 7)
+    out["dow_cos"] = np.cos(2 * np.pi * out["dow"] / 7)
 
-    if id_col in df.columns:
-        summary = df.groupby(id_col)[value_col].agg(
-            count="count",
-            min_value="min",
-            max_value="max",
-            mean_value="mean",
-            neg_count=lambda s: (s < 0).sum(),
-            zero_count=lambda s: (s == 0).sum(),
-        ).reset_index()
-
-        logger.info(f"[{label}] Series summary for {value_col}: {len(summary)} series")
-
-        if len(summary) > max_series_log:
-            truncated = summary.head(max_series_log)
-            logger.info(f"[{label}] Summary (first {max_series_log} series):\n{truncated.to_string(index=False)}")
-        else:
-            logger.info(f"[{label}] Summary:\n{summary.to_string(index=False)}")
-
-        neg_summary = summary[summary["neg_count"] > 0]
-        if not neg_summary.empty:
-            logger.warning(f"[{label}] Series with negative {value_col} values:\n{neg_summary.to_string(index=False)}")
-    else:
-        overall = df[value_col].describe()
-        logger.info(f"[{label}] {value_col} summary: {overall.to_dict()}")
-
-    neg_rows = df[df[value_col] < 0]
-    if not neg_rows.empty:
-        cols = [c for c in [id_col, "ds", value_col] if c in neg_rows.columns]
-        sample = neg_rows[cols].head(sample_rows)
-        logger.warning(
-            f"[{label}] Negative {value_col} rows: {len(neg_rows)}. "
-            f"Sample:\n{sample.to_string(index=False)}"
-        )
-
-
-def _get_n_jobs() -> int:
-    raw = os.getenv("RENEWABLE_N_JOBS", "1").strip()
-    try:
-        return int(raw)
-    except ValueError:
-        return 1
+    return out.drop(columns=["hour", "dow"])
 
 
 @dataclass
 class ForecastConfig:
-    """Configuration for renewable forecasting."""
-
     horizon: int = 24
     confidence_levels: tuple[int, int] = (80, 95)
-    season_length: int = 24
-    weekly_season: int = 168  # 24 * 7
-    models: list[str] = field(default_factory=lambda: ["AutoARIMA", "MSTL"])
 
 
 class RenewableForecastModel:
-    """Multi-series probabilistic forecasting with weather exogenous.
-
-    Designed for wind/solar generation with:
-    - Weather features (wind speed, solar radiation)
-    - Dual prediction intervals (80%, 95%)
-    - Zero-safe metrics (solar has 0s at night)
-
-    Example:
-        >>> model = RenewableForecastModel(horizon=24)
-        >>> model.fit(df_train, weather_train)
-        >>> forecasts = model.predict(df_test, weather_forecast)
-        >>> print(forecasts[["unique_id", "ds", "yhat", "yhat_lo_80", "yhat_hi_80"]])
-    """
-
-    def __init__(
-        self,
-        horizon: int = 24,
-        confidence_levels: tuple[int, int] = (80, 95),
-    ):
-        """Initialize the forecasting model.
-
-        Args:
-            horizon: Number of hours to forecast
-            confidence_levels: Tuple of confidence levels for intervals
-        """
+    def __init__(self, horizon: int = 24, confidence_levels: tuple[int, int] = (80, 95)):
         self.horizon = horizon
         self.confidence_levels = confidence_levels
         self.sf = None
+        self._train_df = None  # contains y + exog columns
+        self._exog_cols: list[str] = []
         self.fitted = False
 
-    def prepare_features(
-        self,
-        df: pd.DataFrame,
-        weather_df: Optional[pd.DataFrame] = None,
-    ) -> pd.DataFrame:
-        """Merge generation with weather features and add time features.
+    def prepare_training_df(self, df: pd.DataFrame, weather_df: Optional[pd.DataFrame]) -> pd.DataFrame:
+        req = {"unique_id", "ds", "y"}
+        if not req.issubset(df.columns):
+            raise ValueError(f"generation df missing cols={sorted(req - set(df.columns))}")
 
-        Args:
-            df: Generation data [unique_id, ds, y]
-            weather_df: Weather data [ds, region, weather_vars...]
+        work = df.copy()
+        work["ds"] = pd.to_datetime(work["ds"], errors="raise")
+        work = work.sort_values(["unique_id", "ds"]).reset_index(drop=True)
 
-        Returns:
-            DataFrame with features added [unique_id, ds, y, exog_vars...]
-        """
-        result = df.copy()
-
-        # Add time features (cyclic encoding)
-        result["hour"] = result["ds"].dt.hour
-        result["hour_sin"] = np.sin(2 * np.pi * result["hour"] / 24)
-        result["hour_cos"] = np.cos(2 * np.pi * result["hour"] / 24)
-
-        result["dayofweek"] = result["ds"].dt.dayofweek
-        result["dow_sin"] = np.sin(2 * np.pi * result["dayofweek"] / 7)
-        result["dow_cos"] = np.cos(2 * np.pi * result["dayofweek"] / 7)
-
-        # Add weather features if provided
-        if weather_df is not None and len(weather_df) > 0:
-            # Extract region from unique_id
-            result["region"] = result["unique_id"].str.split("_").str[0]
-
-            # Merge weather
-            weather_cols = [c for c in weather_df.columns if c not in ["ds", "region"]]
-
-            result = result.merge(
-                weather_df[["ds", "region"] + weather_cols],
-                on=["ds", "region"],
-                how="left",
+        # Fail-loud on null y (truthful: indicates missing measurements, not missing timestamps)
+        y_null = work["y"].isna()
+        if y_null.any():
+            sample = work.loc[y_null, ["unique_id", "ds", "y"]].head(25)
+            raise RuntimeError(
+                f"[generation][Y] Found null y values (no imputation). rows={int(y_null.sum())}. "
+                f"Sample:\n{sample.to_string(index=False)}"
             )
 
-            # Diagnostics to surface weather gaps before/after forward fill.
-            missing_before = {
-                col: int(result[col].isna().sum())
-                for col in weather_cols
-                if col in result.columns and result[col].isna().any()
-            }
-            if missing_before:
-                logger.warning(
-                    "[prepare_features] Missing weather values after merge: "
-                    f"{missing_before}"
+        # Hourly grid enforcement (no imputation).
+        # Default policy remains strict. To run CV while keeping the defect visible:
+        #   set policy="drop_incomplete_series" here temporarily.
+        work = _enforce_hourly_grid(work, label="generation", policy="drop_incomplete_series")
+
+
+        # Deterministic time features
+        work = _add_time_features(work)
+
+        # Weather merge (FAIL LOUD on missing)
+        if weather_df is not None and not weather_df.empty:
+            if not {"ds", "region"}.issubset(weather_df.columns):
+                raise ValueError("weather_df must have columns ['ds','region', ...]")
+
+            work["region"] = work["unique_id"].str.split("_").str[0]
+
+            wcols = [c for c in WEATHER_VARS if c in weather_df.columns]
+            if not wcols:
+                raise ValueError("weather_df has none of expected WEATHER_VARS")
+
+            merged = work.merge(
+                weather_df[["ds", "region"] + wcols],
+                on=["ds", "region"],
+                how="left",
+                validate="many_to_one",
+            )
+
+            missing_any = merged[wcols].isna().any(axis=1)
+            if missing_any.any():
+                sample = merged.loc[missing_any, ["unique_id", "ds", "region"] + wcols].head(10)
+                raise RuntimeError(
+                    f"[weather][ALIGN] Missing weather after merge rows={int(missing_any.sum())}. "
+                    f"Sample:\n{sample.to_string(index=False)}"
                 )
 
-            # Fill missing weather with forward fill within series
-            for col in weather_cols:
-                if col in result.columns:
-                    result[col] = result.groupby("unique_id")[col].ffill()
+            work = merged.drop(columns=["region"])
+            self._exog_cols = ["hour_sin", "hour_cos", "dow_sin", "dow_cos"] + wcols
+        else:
+            self._exog_cols = ["hour_sin", "hour_cos", "dow_sin", "dow_cos"]
 
-            missing_after = {
-                col: int(result[col].isna().sum())
-                for col in weather_cols
-                if col in result.columns and result[col].isna().any()
-            }
-            if missing_after:
-                logger.warning(
-                    "[prepare_features] Weather values still missing after ffill: "
-                    f"{missing_after}"
-                )
+        return work
 
-            result = result.drop(columns=["region"])
-
-        # Add lag features (shifted to prevent leakage)
-        result = result.sort_values(["unique_id", "ds"])
-        result["y_lag_1"] = result.groupby("unique_id")["y"].shift(1)
-        result["y_lag_24"] = result.groupby("unique_id")["y"].shift(24)
-
-        # Drop temporary columns
-        result = result.drop(columns=["hour", "dayofweek"], errors="ignore")
-
-        return result
 
     def fit(self, df: pd.DataFrame, weather_df: Optional[pd.DataFrame] = None) -> None:
-        """Train StatsForecast models.
-
-        Args:
-            df: Training data [unique_id, ds, y]
-            weather_df: Weather features [ds, region, weather_vars...]
-        """
         from statsforecast import StatsForecast
-        from statsforecast.models import MSTL, AutoARIMA, AutoETS, SeasonalNaive
+        from statsforecast.models import AutoARIMA, SeasonalNaive, AutoETS, MSTL
 
-        # Prepare features
-        train_df = self.prepare_features(df, weather_df)
+        train_df = self.prepare_training_df(df, weather_df)
 
-        _log_series_summary(train_df, value_col="y", label="fit_input")
-
-        # Define models
         models = [
             AutoARIMA(season_length=24),
             SeasonalNaive(season_length=24),
             AutoETS(season_length=24),
-            MSTL(
-                season_length=[24, 168],
-                trend_forecaster=AutoARIMA(),
-                alias="MSTL_ARIMA",
-            ),
+            MSTL(season_length=[24, 168], trend_forecaster=AutoARIMA(), alias="MSTL_ARIMA"),
         ]
 
-        # Create StatsForecast object
-        self.sf = StatsForecast(
-            models=models,
-            freq="h",
-            n_jobs=_get_n_jobs(),
-        )
-
-        # Store training data for CV and predictions
-        self._train_df = train_df[["unique_id", "ds", "y"]].copy()
-
-        logger.info(f"Model fit: {len(train_df)} rows, {train_df['unique_id'].nunique()} series")
+        self.sf = StatsForecast(models=models, freq="h", n_jobs=-1)
+        self._train_df = train_df
         self.fitted = True
 
-    def predict(
-        self,
-        future_weather: Optional[pd.DataFrame] = None,
-    ) -> pd.DataFrame:
-        """Generate forecasts with dual prediction intervals.
+        print(f"[fit] rows={len(train_df)} series={train_df['unique_id'].nunique()} exog_cols={self._exog_cols}")
 
-        Args:
-            future_weather: Weather forecast data for prediction horizon
-
-        Returns:
-            DataFrame with columns:
-            - unique_id, ds, yhat
-            - yhat_lo_80, yhat_hi_80
-            - yhat_lo_95, yhat_hi_95
+    def build_future_X_df(self, future_weather: pd.DataFrame) -> pd.DataFrame:
+        """
+        Build future X_df for forecast horizon using forecast weather.
+        Must include: unique_id, ds, and exactly the exog columns used in training.
         """
         if not self.fitted:
-            raise RuntimeError("Model must be fitted before prediction. Call fit() first.")
+            raise RuntimeError("fit() first")
 
-        # Generate forecasts with both confidence levels
-        forecasts = self.sf.forecast(
-            h=self.horizon,
-            df=self._train_df,
-            level=list(self.confidence_levels),
+        if future_weather is None or future_weather.empty:
+            raise RuntimeError("future_weather required to forecast with regressors (no fabrication).")
+
+        if not {"ds", "region"}.issubset(future_weather.columns):
+            raise ValueError("future_weather must have columns ['ds','region', ...]")
+
+        # Create the future ds grid per series
+        last_ds = self._train_df.groupby("unique_id")["ds"].max()
+        frames = []
+        for uid, end in last_ds.items():
+            future_ds = pd.date_range(end + pd.Timedelta(hours=1), periods=self.horizon, freq="h")
+            frames.append(pd.DataFrame({"unique_id": uid, "ds": future_ds}))
+        X = pd.concat(frames, ignore_index=True)
+
+        X = _add_time_features(X)
+        X["region"] = X["unique_id"].str.split("_").str[0]
+
+        wcols = [c for c in WEATHER_VARS if c in future_weather.columns]
+        X = X.merge(
+            future_weather[["ds", "region"] + wcols],
+            on=["ds", "region"],
+            how="left",
+            validate="many_to_one",
         )
 
-        forecasts = forecasts.reset_index()
+        # Fail loud on missing future regressors
+        needed = [c for c in self._exog_cols if c not in ["hour_sin", "hour_cos", "dow_sin", "dow_cos"]]  # weather cols
+        if needed:
+            missing_any = X[needed].isna().any(axis=1)
+            if missing_any.any():
+                sample = X.loc[missing_any, ["unique_id", "ds", "region"] + needed].head(10)
+                raise RuntimeError(
+                    f"[future_weather][ALIGN] Missing future weather rows={int(missing_any.sum())}. "
+                    f"Sample:\n{sample.to_string(index=False)}"
+                )
 
-        # Log per-model point forecasts to isolate which model goes negative.
-        model_cols = [c for c in forecasts.columns if c not in ["unique_id", "ds", "cutoff"]]
-        point_cols = [c for c in model_cols if not any(x in c for x in ["-lo-", "-hi-"])]
-        _log_value_columns_summary(forecasts, point_cols, label="forecast_models")
+        X = X.drop(columns=["region"])
+        keep = ["unique_id", "ds"] + self._exog_cols
+        return X[keep].sort_values(["unique_id", "ds"]).reset_index(drop=True)
 
-        # Standardize column names
-        result = self._standardize_forecast_columns(forecasts)
+    def predict(self, future_weather: pd.DataFrame) -> pd.DataFrame:
+        if not self.fitted:
+            raise RuntimeError("fit() first")
 
-        _log_series_summary(result, value_col="yhat", label="forecast_yhat")
-        interval_cols = []
-        for level in self.confidence_levels:
-            interval_cols.extend([f"yhat_lo_{level}", f"yhat_hi_{level}"])
-        _log_value_columns_summary(result, interval_cols, label="forecast_intervals")
+        X_df = self.build_future_X_df(future_weather)
 
-        logger.info(f"Predictions generated: {len(result)} rows, {self.horizon}h horizon")
+        # IMPORTANT: If you fit models using exogenous regressors, you must supply X_df at forecast time.
+        fcst = self.sf.forecast(
+            h=self.horizon,
+            df=self._train_df,
+            X_df=X_df,
+            level=list(self.confidence_levels),
+        ).reset_index()
 
-        return result
+        return fcst
 
     def cross_validate(
         self,
         df: pd.DataFrame,
         weather_df: Optional[pd.DataFrame] = None,
-        n_windows: int = 5,
+        n_windows: int = 3,
         step_size: int = 168,
-    ) -> tuple[pd.DataFrame, pd.DataFrame]:
-        """Run rolling-origin cross-validation.
-
-        Args:
-            df: Full dataset [unique_id, ds, y]
-            weather_df: Weather features
-            n_windows: Number of CV windows
-            step_size: Hours between windows
-
-        Returns:
-            Tuple of (cv_results, leaderboard)
-        """
+    ) -> pd.DataFrame:
         from statsforecast import StatsForecast
-        from statsforecast.models import MSTL, AutoARIMA, AutoETS, SeasonalNaive
+        from statsforecast.models import AutoARIMA, SeasonalNaive, AutoETS, MSTL
 
-        # Prepare features
-        cv_df = self.prepare_features(df, weather_df)
-        cv_df = cv_df[["unique_id", "ds", "y"]].copy()
+        train_df = self.prepare_training_df(df, weather_df)
 
-        _log_series_summary(cv_df, value_col="y", label="cv_input")
-
-        # Models
         models = [
             AutoARIMA(season_length=24),
             SeasonalNaive(season_length=24),
             AutoETS(season_length=24),
-            MSTL(
-                season_length=[24, 168],
-                trend_forecaster=AutoARIMA(),
-                alias="MSTL_ARIMA",
-            ),
+            MSTL(season_length=[24, 168], trend_forecaster=AutoARIMA(), alias="MSTL_ARIMA"),
         ]
+        sf = StatsForecast(models=models, freq="h", n_jobs=-1)
 
-        sf = StatsForecast(models=models, freq="h", n_jobs=_get_n_jobs())
-
-        logger.info(f"Running CV: {n_windows} windows, step={step_size}h, horizon={self.horizon}h")
-
-        cv_results = sf.cross_validation(
-            df=cv_df,
+        print(f"[cv] windows={n_windows} step={step_size} h={self.horizon} rows={len(train_df)} series={train_df['unique_id'].nunique()}")
+        cv = sf.cross_validation(
+            df=train_df,
             h=self.horizon,
             step_size=step_size,
             n_windows=n_windows,
             level=list(self.confidence_levels),
-        )
+        ).reset_index()
 
-        cv_results = cv_results.reset_index()
-
-        # Compute leaderboard
-        leaderboard = self._compute_leaderboard(cv_results)
-
-        return cv_results, leaderboard
-
-    def _standardize_forecast_columns(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Standardize forecast column names.
-
-        Renames model-specific columns to standard format:
-        - yhat: point forecast (uses best model)
-        - yhat_lo_80, yhat_hi_80: 80% interval
-        - yhat_lo_95, yhat_hi_95: 95% interval
-        """
-        result = df.copy()
-
-        # Find best model (prefer MSTL_ARIMA if available)
-        model_cols = [c for c in result.columns if c not in ["unique_id", "ds", "cutoff"]]
-        point_cols = [c for c in model_cols if not any(x in c for x in ["-lo-", "-hi-"])]
-
-        if "MSTL_ARIMA" in point_cols:
-            best_model = "MSTL_ARIMA"
-        elif "AutoARIMA" in point_cols:
-            best_model = "AutoARIMA"
-        else:
-            best_model = point_cols[0] if point_cols else None
-
-        if best_model:
-            logger.info(f"[standardize_forecast] Selected model for yhat: {best_model}")
-        else:
-            logger.warning("[standardize_forecast] No model columns found for yhat selection.")
-
-        if best_model:
-            result["yhat"] = result[best_model]
-
-            for level in self.confidence_levels:
-                lo_col = f"{best_model}-lo-{level}"
-                hi_col = f"{best_model}-hi-{level}"
-
-                if lo_col in result.columns:
-                    result[f"yhat_lo_{level}"] = result[lo_col]
-                if hi_col in result.columns:
-                    result[f"yhat_hi_{level}"] = result[hi_col]
-
-        # Keep essential columns
-        keep_cols = ["unique_id", "ds"]
-        if "cutoff" in result.columns:
-            keep_cols.append("cutoff")
-        if "y" in result.columns:
-            keep_cols.append("y")
-
-        keep_cols.extend(["yhat"])
-        for level in self.confidence_levels:
-            keep_cols.extend([f"yhat_lo_{level}", f"yhat_hi_{level}"])
-
-        # Also keep raw model columns for analysis
-        for col in model_cols:
-            if col not in keep_cols:
-                keep_cols.append(col)
-
-        result = result[[c for c in keep_cols if c in result.columns]]
-
-        return result
-
-    def _compute_leaderboard(self, cv_results: pd.DataFrame) -> pd.DataFrame:
-        """Compute model leaderboard from CV results.
-
-        Args:
-            cv_results: Cross-validation results
-
-        Returns:
-            Leaderboard DataFrame with metrics per model
-        """
-        # Find model columns
-        model_cols = [
-            c for c in cv_results.columns
-            if c not in ["unique_id", "ds", "cutoff", "y"]
-            and not any(x in c for x in ["-lo-", "-hi-"])
-        ]
-
-        rows = []
-
-        for model in model_cols:
-            y_true = cv_results["y"].values
-            y_pred = cv_results[model].values
-
-            # CRITICAL: Use RMSE and MAE, NOT MAPE (solar has zeros)
-            rmse = ForecastMetrics.rmse(y_true, y_pred)
-            mae = ForecastMetrics.mae(y_true, y_pred)
-
-            # Coverage for each level
-            coverages = {}
-            for level in self.confidence_levels:
-                lo_col = f"{model}-lo-{level}"
-                hi_col = f"{model}-hi-{level}"
-
-                if lo_col in cv_results.columns and hi_col in cv_results.columns:
-                    coverage = ForecastMetrics.coverage(
-                        y_true,
-                        cv_results[lo_col].values,
-                        cv_results[hi_col].values,
-                    )
-                    coverages[f"coverage_{level}"] = coverage
-
-            rows.append({
-                "model": model,
-                "rmse": rmse,
-                "mae": mae,
-                **coverages,
-            })
-
-        leaderboard = pd.DataFrame(rows).sort_values("rmse")
-
-        return leaderboard
-
-    def compute_metrics(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-        lower_80: Optional[np.ndarray] = None,
-        upper_80: Optional[np.ndarray] = None,
-        lower_95: Optional[np.ndarray] = None,
-        upper_95: Optional[np.ndarray] = None,
-    ) -> dict:
-        """Compute evaluation metrics.
-
-        CRITICAL: Uses RMSE and MAE, NOT MAPE (solar has zeros at night).
-
-        Args:
-            y_true: Actual values
-            y_pred: Predicted values
-            lower_80, upper_80: 80% prediction interval bounds
-            lower_95, upper_95: 95% prediction interval bounds
-
-        Returns:
-            Dictionary with metrics
-        """
-        metrics = {
-            "rmse": ForecastMetrics.rmse(y_true, y_pred),
-            "mae": ForecastMetrics.mae(y_true, y_pred),
-            # NOTE: MAPE intentionally excluded - undefined when y=0 (solar at night)
-        }
-
-        # Coverage metrics
-        if lower_80 is not None and upper_80 is not None:
-            metrics["coverage_80"] = ForecastMetrics.coverage(y_true, lower_80, upper_80)
-
-        if lower_95 is not None and upper_95 is not None:
-            metrics["coverage_95"] = ForecastMetrics.coverage(y_true, lower_95, upper_95)
-
-        return metrics
-
-
-def compute_baseline_metrics(
-    cv_results: pd.DataFrame,
-    model_name: str = "MSTL_ARIMA",
-) -> dict:
-    """Compute baseline metrics from backtest for drift detection.
-
-    Args:
-        cv_results: Cross-validation results
-        model_name: Model to use for baseline
-
-    Returns:
-        Dictionary with baseline statistics:
-        - rmse_mean, rmse_std: for threshold calculation
-        - mae_mean, mae_std
-        - coverage_80_mean, coverage_95_mean
-    """
-    if model_name not in cv_results.columns:
-        raise ValueError(f"Model {model_name} not found in CV results")
-
-    # Compute metrics per cutoff window
-    window_metrics = []
-
-    for cutoff in cv_results["cutoff"].unique():
-        window = cv_results[cv_results["cutoff"] == cutoff]
-        y_true = window["y"].values
-        y_pred = window[model_name].values
-
-        rmse = ForecastMetrics.rmse(y_true, y_pred)
-        mae = ForecastMetrics.mae(y_true, y_pred)
-
-        window_metrics.append({"cutoff": cutoff, "rmse": rmse, "mae": mae})
-
-    metrics_df = pd.DataFrame(window_metrics)
-
-    baseline = {
-        "model": model_name,
-        "rmse_mean": metrics_df["rmse"].mean(),
-        "rmse_std": metrics_df["rmse"].std(),
-        "mae_mean": metrics_df["mae"].mean(),
-        "mae_std": metrics_df["mae"].std(),
-        "n_windows": len(metrics_df),
-    }
-
-    # Drift threshold: mean + 2*std
-    baseline["drift_threshold_rmse"] = baseline["rmse_mean"] + 2 * baseline["rmse_std"]
-    baseline["drift_threshold_mae"] = baseline["mae_mean"] + 2 * baseline["mae_std"]
-
-    logger.info(
-        f"Baseline computed: RMSE={baseline['rmse_mean']:.1f}±{baseline['rmse_std']:.1f}, "
-        f"threshold={baseline['drift_threshold_rmse']:.1f}"
-    )
-
-    return baseline
+        return cv
 
 
 if __name__ == "__main__":
-    # Test the model
-    logging.basicConfig(level=logging.INFO)
+    # REAL EXAMPLE: multi-series WND with strict gates and CV
 
-    # Create synthetic data
-    import pandas as pd
-    import numpy as np
+    from src.renewable.eia_renewable import EIARenewableFetcher
+    from src.renewable.open_meteo import OpenMeteoRenewable
 
-    np.random.seed(42)
+    regions = ["CALI", "ERCO", "MISO"]
+    fuel = "WND"
+    start_date = "2024-11-01"
+    end_date = "2024-12-15"
 
-    dates = pd.date_range("2024-01-01", periods=720, freq="h")
-    series_ids = ["CALI_WND", "ERCO_WND"]
+    fetcher = EIARenewableFetcher(debug_env=True)
+    gen = fetcher.fetch_all_regions(fuel, start_date, end_date, regions=regions)
+    _log_series_summary(gen, label="generation_raw")
 
-    dfs = []
-    for sid in series_ids:
-        y = 100 + 20 * np.sin(np.arange(720) * 2 * np.pi / 24) + np.random.normal(0, 5, 720)
-        dfs.append(pd.DataFrame({"unique_id": sid, "ds": dates, "y": y}))
+    weather_api = OpenMeteoRenewable(strict=True)
+    wx_hist = weather_api.fetch_all_regions_historical(regions, start_date, end_date, debug=True)
 
-    df = pd.concat(dfs, ignore_index=True)
+    model = RenewableForecastModel(horizon=24, confidence_levels=(80, 95))
 
-    print("\n=== Testing RenewableForecastModel ===")
-    model = RenewableForecastModel(horizon=24)
+    # CV (historical): regressors live in df, no filling allowed
+    cv = model.cross_validate(gen, weather_df=wx_hist, n_windows=3, step_size=168)
+    print(cv.head().to_string(index=False))
 
-    # Test feature preparation
-    print("\n1. Feature preparation")
-    features = model.prepare_features(df)
-    print(f"Features: {features.columns.tolist()}")
-
-    # Test cross-validation
-    print("\n2. Cross-validation")
-    cv_results, leaderboard = model.cross_validate(df, n_windows=3, step_size=168)
-    print(f"CV results: {len(cv_results)} rows")
-    print("\nLeaderboard:")
-    print(leaderboard)
-
-    # Test baseline computation
-    print("\n3. Baseline metrics")
-    baseline = compute_baseline_metrics(cv_results)
-    print(f"Baseline: {baseline}")
+    # Optional: fit + forecast next 24h using forecast weather (no leakage)
+    # wx_future = weather_api.fetch_all_regions_forecast(regions, horizon_hours=48, debug=True)
+    # model.fit(gen, weather_df=wx_hist)
+    # fcst = model.predict(future_weather=wx_future)
+    # print(fcst.head().to_string(index=False))

@@ -1,3 +1,4 @@
+# file: src/renewable/db.py
 """Database schema and operations for renewable forecasting.
 
 Extends the Chapter 4 monitoring database with:

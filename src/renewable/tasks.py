@@ -1,3 +1,4 @@
+# file: src\renewable\tasks.py
 """Renewable energy forecasting pipeline tasks.
 
 Idempotent tasks for:

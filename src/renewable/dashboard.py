@@ -1,3 +1,4 @@
+# file: src/renewable/dashboard.py
 """Streamlit dashboard for renewable energy forecasting.
 
 Provides:
@@ -79,6 +80,7 @@ def main():
         st.divider()
 
         # Actions
+        show_debug = st.checkbox("Show Debug", value=False)
         if st.button("🔄 Refresh Data", width="stretch"):
             st.rerun()
 
@@ -94,7 +96,7 @@ def main():
     ])
 
     with tab1:
-        render_forecasts_tab(db_path, selected_regions, fuel_type)
+        render_forecasts_tab(db_path, selected_regions, fuel_type, show_debug=show_debug)
 
     with tab2:
         render_drift_tab(db_path)
@@ -106,21 +108,29 @@ def main():
         render_weather_tab(db_path, selected_regions)
 
 
-def render_forecasts_tab(db_path: str, regions: list, fuel_type: str):
+def render_forecasts_tab(db_path: str, regions: list, fuel_type: str, *, show_debug: bool = False):
     """Render forecast visualization with prediction intervals."""
     st.subheader("Generation Forecasts")
 
     forecasts_df = pd.DataFrame()
+    data_source = "none"
+    derived_columns: list[str] = []
 
     # Try to load from parquet file first (pipeline output)
     parquet_path = Path("data/renewable/forecasts.parquet")
     if parquet_path.exists():
         try:
             forecasts_df = pd.read_parquet(parquet_path)
+            data_source = f"parquet:{parquet_path}"
             # Add region/fuel_type columns if missing
-            if "region" not in forecasts_df.columns and "unique_id" in forecasts_df.columns:
-                forecasts_df["region"] = forecasts_df["unique_id"].str.split("_").str[0]
-                forecasts_df["fuel_type"] = forecasts_df["unique_id"].str.split("_").str[1]
+            if "unique_id" in forecasts_df.columns:
+                parts = forecasts_df["unique_id"].astype(str).str.split("_", n=1, expand=True)
+                if "region" not in forecasts_df.columns:
+                    forecasts_df["region"] = parts[0]
+                    derived_columns.append("region")
+                if "fuel_type" not in forecasts_df.columns:
+                    forecasts_df["fuel_type"] = parts[1] if parts.shape[1] > 1 else pd.NA
+                    derived_columns.append("fuel_type")
             st.success(f"Loaded {len(forecasts_df)} forecasts from pipeline")
         except Exception as e:
             st.warning(f"Could not load parquet: {e}")
@@ -129,6 +139,7 @@ def render_forecasts_tab(db_path: str, regions: list, fuel_type: str):
     if forecasts_df.empty:
         try:
             forecasts_df = get_recent_forecasts(db_path, hours=72)
+            data_source = f"db:{db_path}"
         except Exception as e:
             st.warning(f"Could not load from database: {e}")
 
@@ -136,6 +147,40 @@ def render_forecasts_tab(db_path: str, regions: list, fuel_type: str):
         # Show demo data
         st.info("No forecasts found. Showing demo data.")
         forecasts_df = generate_demo_forecasts(regions, fuel_type)
+        data_source = "demo"
+
+    if show_debug:
+        with st.expander("Debug: Forecast Data", expanded=False):
+            st.markdown("**Source**")
+            st.code(data_source)
+            st.markdown("**Columns**")
+            st.code(", ".join(forecasts_df.columns.tolist()))
+
+            st.markdown("**Counts (pre-filter)**")
+            st.write({"rows": int(len(forecasts_df))})
+
+            if derived_columns:
+                st.markdown("**Derived Columns**")
+                st.write(derived_columns)
+
+            if "unique_id" in forecasts_df.columns:
+                st.markdown("**unique_id sample**")
+                st.write(forecasts_df["unique_id"].dropna().astype(str).head(10).tolist())
+
+            if "fuel_type" in forecasts_df.columns:
+                st.markdown("**fuel_type counts**")
+                st.dataframe(forecasts_df["fuel_type"].value_counts(dropna=False).to_frame())
+
+                unknown = sorted(
+                    {str(v) for v in forecasts_df["fuel_type"].dropna().unique()}
+                    - set(FUEL_TYPES.keys())
+                )
+                if unknown:
+                    st.warning(f"Unknown fuel_type values: {unknown}")
+
+            if "region" in forecasts_df.columns:
+                st.markdown("**region counts**")
+                st.dataframe(forecasts_df["region"].value_counts(dropna=False).to_frame())
 
     # Filter by selections
     if fuel_type != "Both":
@@ -143,6 +188,16 @@ def render_forecasts_tab(db_path: str, regions: list, fuel_type: str):
 
     if regions:
         forecasts_df = forecasts_df[forecasts_df["region"].isin(regions)]
+
+    if show_debug:
+        with st.expander("Debug: Filter Result", expanded=False):
+            st.markdown("**Applied Filters**")
+            st.write({"fuel_type": fuel_type, "regions": regions})
+            st.markdown("**Counts (post-filter)**")
+            st.write({"rows": int(len(forecasts_df))})
+            if "unique_id" in forecasts_df.columns:
+                st.markdown("**unique_id after filter**")
+                st.write(sorted(forecasts_df["unique_id"].dropna().astype(str).unique().tolist()))
 
     if forecasts_df.empty:
         st.warning("No data matching filters")

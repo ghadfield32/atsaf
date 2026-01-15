@@ -1,3 +1,4 @@
+# file: src/renewable/validation.py
 """Validation utilities for renewable generation data."""
 
 from __future__ import annotations

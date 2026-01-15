@@ -8,5 +8,8 @@
 .local/
 .env
 .venv/
+# Python bytecode
 __pycache__/
 *.pyc
+*.pyo
+*.pyd

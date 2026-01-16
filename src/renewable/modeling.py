@@ -82,6 +82,24 @@ def _missing_hour_blocks(ds: pd.Series) -> list[tuple[pd.Timestamp, pd.Timestamp
 
 
 def _hourly_grid_report(df: pd.DataFrame) -> pd.DataFrame:
+    cols = [
+        "unique_id",
+        "start",
+        "end",
+        "expected_hours",
+        "actual_hours",
+        "missing_hours",
+        "missing_ratio",
+        "n_missing_blocks",
+        "largest_missing_block_hours",
+        "first_missing_block_start",
+        "first_missing_block_end",
+    ]
+
+    if df.empty:
+        # Return an empty report with a stable schema (so callers can fail-loud cleanly)
+        return pd.DataFrame(columns=cols)
+
     rows = []
     for uid, g in df.groupby("unique_id"):
         g = g.sort_values("ds")
@@ -105,7 +123,9 @@ def _hourly_grid_report(df: pd.DataFrame) -> pd.DataFrame:
                 "first_missing_block_end": blocks[0][1] if blocks else pd.NaT,
             }
         )
-    return pd.DataFrame(rows).sort_values(["missing_ratio", "missing_hours"], ascending=False)
+
+    rep = pd.DataFrame(rows)
+    return rep.sort_values(["missing_ratio", "missing_hours"], ascending=False)
 
 
 def _enforce_hourly_grid(
@@ -114,12 +134,19 @@ def _enforce_hourly_grid(
     label: str,
     policy: str = "raise",  # "raise" | "drop_incomplete_series"
 ) -> pd.DataFrame:
-    """
-    Enforce hourly continuity without imputation.
-    - raise: fail loud with detailed report
-    - drop_incomplete_series: drop series that have missing hours (log what was dropped)
-    """
+    if df.empty:
+        raise RuntimeError(
+            f"[{label}][GRID] Cannot enforce hourly grid: input dataframe is empty. "
+            "This is upstream (fetch) failure, not a grid issue."
+        )
+
     rep = _hourly_grid_report(df)
+    if rep.empty:
+        raise RuntimeError(
+            f"[{label}][GRID] No series found to report on (rep empty). "
+            "This indicates upstream emptiness or missing 'unique_id' groups."
+        )
+
     worst = rep.iloc[0].to_dict()
 
     if worst["missing_hours"] == 0:
@@ -135,16 +162,15 @@ def _enforce_hourly_grid(
             raise RuntimeError(f"[{label}][GRID] all series dropped due to missing hours")
         return kept
 
-    # default: raise
     worst_uid = worst["unique_id"]
     g = df[df["unique_id"] == worst_uid].sort_values("ds")
     blocks = _missing_hour_blocks(g["ds"])
-    sample_blocks = blocks[:3]
     raise RuntimeError(
         f"[{label}][GRID] Missing hours detected (no imputation). "
         f"worst_unique_id={worst_uid} missing_hours={worst['missing_hours']} "
-        f"missing_ratio={worst['missing_ratio']:.3f} blocks(sample)={sample_blocks}"
+        f"missing_ratio={worst['missing_ratio']:.3f} blocks(sample)={blocks[:3]}"
     )
+
 
 def _validate_hourly_grid_fail_loud(
     df: pd.DataFrame,
@@ -381,11 +407,16 @@ class RenewableForecastModel:
         if not req.issubset(df.columns):
             raise ValueError(f"generation df missing cols={sorted(req - set(df.columns))}")
 
+        if df.empty:
+            raise RuntimeError(
+                "[generation] Empty generation dataframe passed into modeling. "
+                "This is upstream (EIA fetch/cache) failure — inspect fetch_diagnostics and fetch_generation logs."
+            )
+
         work = df.copy()
         work["ds"] = pd.to_datetime(work["ds"], errors="raise")
         work = work.sort_values(["unique_id", "ds"]).reset_index(drop=True)
 
-        # Fail-loud on null y (truthful: indicates missing measurements, not missing timestamps)
         y_null = work["y"].isna()
         if y_null.any():
             sample = work.loc[y_null, ["unique_id", "ds", "y"]].head(25)
@@ -394,16 +425,9 @@ class RenewableForecastModel:
                 f"Sample:\n{sample.to_string(index=False)}"
             )
 
-        # Hourly grid enforcement (no imputation).
-        # Default policy remains strict. To run CV while keeping the defect visible:
-        #   set policy="drop_incomplete_series" here temporarily.
         work = _enforce_hourly_grid(work, label="generation", policy="drop_incomplete_series")
-
-
-        # Deterministic time features
         work = _add_time_features(work)
 
-        # Weather merge (FAIL LOUD on missing)
         if weather_df is not None and not weather_df.empty:
             if not {"ds", "region"}.issubset(weather_df.columns):
                 raise ValueError("weather_df must have columns ['ds','region', ...]")
@@ -435,6 +459,7 @@ class RenewableForecastModel:
             self._exog_cols = ["hour_sin", "hour_cos", "dow_sin", "dow_cos"]
 
         return work
+
 
 
     def fit(self, df: pd.DataFrame, weather_df: Optional[pd.DataFrame] = None) -> None:

@@ -483,6 +483,18 @@ def run_full_pipeline(
     results["generation_rows"] = len(generation_df)
     results["series_count"] = generation_df["unique_id"].nunique()
 
+    from src.renewable.validation import validate_generation_df
+
+    expected_series = [f"{r}_{f}" for r in config.regions for f in config.fuel_types]
+    rep = validate_generation_df(
+        generation_df,
+        expected_series=expected_series,
+        max_missing_ratio=0.02,
+        max_lag_hours=48,  # choose a value consistent with EIA publishing lag
+    )
+    if not rep.ok:
+        raise RuntimeError(f"[pipeline][generation_validation] {rep.message} details={rep.details}")
+
     # Step 2: Fetch weather
     weather_df = fetch_renewable_weather(config)
     results["weather_rows"] = len(weather_df)

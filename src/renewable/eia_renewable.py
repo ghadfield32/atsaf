@@ -150,6 +150,10 @@ class EIARenewableFetcher:
         all_records: list[dict] = []
         offset = 0
 
+        # ✅ FIX: initialize loop diagnostics counters
+        page_count = 0
+        total_hint: Optional[int] = None
+
         while True:
             params = {
                 "api_key": self.api_key,
@@ -170,6 +174,7 @@ class EIARenewableFetcher:
             payload = resp.json()
 
             records, meta = self._extract_eia_response(payload, request_url=resp.url)
+
             page_count += 1
             if total_hint is None:
                 total_hint = meta.get("total")
@@ -182,8 +187,22 @@ class EIARenewableFetcher:
                     f"[PAGE] region={region} fuel={fuel_type} returned={returned} "
                     f"offset={offset} total={meta.get('total')} url={safe_url}"
                 )
+
+            # Empty on first page: legitimate empty series for that window
             if returned == 0 and offset == 0:
+                if diag is not None:
+                    diag.update({
+                        "region": region,
+                        "fuel_type": fuel_type,
+                        "start_date": start_date,
+                        "end_date": end_date,
+                        "total_records": total_hint,
+                        "pages": page_count,
+                        "rows_parsed": 0,
+                        "empty": True,
+                    })
                 return pd.DataFrame(columns=["ds", "value", "region", "fuel_type"])
+
             if returned == 0:
                 break
 
@@ -205,12 +224,8 @@ class EIARenewableFetcher:
                 f"columns={df.columns.tolist()} sample_record_keys={sample_keys}"
             )
 
-        raw_rows = len(df)
         df["ds"] = pd.to_datetime(df["period"], utc=True, errors="coerce").dt.tz_convert("UTC").dt.tz_localize(None)
         df["value"] = pd.to_numeric(df["value"], errors="coerce")
-
-        bad_ds = int(df["ds"].isna().sum())
-        bad_val = int(df["value"].isna().sum())
 
         df["region"] = region
         df["fuel_type"] = fuel_type
@@ -230,6 +245,7 @@ class EIARenewableFetcher:
             })
 
         return df[["ds", "value", "region", "fuel_type"]]
+
 
     def fetch_all_regions(
         self,

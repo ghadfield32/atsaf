@@ -232,6 +232,28 @@ class EIARenewableFetcher:
 
         df = df.dropna(subset=["ds", "value"]).sort_values("ds").reset_index(drop=True)
 
+        # DEBUG: Log negative values for investigation
+        neg_mask = df["value"] < 0
+        if neg_mask.any():
+            neg_count = int(neg_mask.sum())
+            neg_min = float(df.loc[neg_mask, "value"].min())
+            neg_max = float(df.loc[neg_mask, "value"].max())
+            neg_sample = df.loc[neg_mask, ["ds", "value"]].head(10)
+            logger.warning(
+                "[fetch_region][NEGATIVE] region=%s fuel=%s count=%d min=%.2f max=%.2f",
+                region, fuel_type, neg_count, neg_min, neg_max,
+            )
+            for _, row in neg_sample.iterrows():
+                logger.warning("  ds=%s value=%.2f", row["ds"], row["value"])
+
+            # Clamp negative values to zero (preserves hourly grid for modeling)
+            # Note: Removing rows would create gaps that cause series to be dropped
+            logger.warning(
+                "[fetch_region][CLAMP] Clamping %d negative values to 0 for %s_%s (%.1f%%)",
+                neg_count, region, fuel_type, 100 * neg_count / max(len(df), 1),
+            )
+            df["value"] = df["value"].clip(lower=0)
+
         if diag is not None:
             diag.update({
                 "region": region,

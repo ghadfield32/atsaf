@@ -344,6 +344,7 @@ def generate_renewable_forecasts(
     config: RenewablePipelineConfig,
     generation_df: Optional[pd.DataFrame] = None,
     weather_df: Optional[pd.DataFrame] = None,
+    best_model: str = "MSTL_ARIMA",
 ) -> pd.DataFrame:
     """Task 4: Generate forecasts with prediction intervals."""
     output_path = config.forecasts_path()
@@ -354,7 +355,7 @@ def generate_renewable_forecasts(
     if weather_df is None:
         weather_df = pd.read_parquet(config.weather_path())
 
-    logger.info(f"[generate_forecasts] Generating {config.horizon}h forecasts")
+    logger.info(f"[generate_forecasts] Generating {config.horizon}h forecasts using model={best_model}")
 
     # Ensure datetime types
     generation_df = generation_df.copy()
@@ -380,7 +381,7 @@ def generate_renewable_forecasts(
             f"last_gen_ds={last_gen_ds}"
         )
 
-    forecasts = model.predict(future_weather=future_weather)
+    forecasts = model.predict(future_weather=future_weather, best_model=best_model)
 
     forecasts.to_parquet(output_path, index=False)
     logger.info(f"[generate_forecasts] Saved: {output_path} ({len(forecasts)} rows)")
@@ -503,12 +504,15 @@ def run_full_pipeline(
     cv_results, leaderboard, baseline = train_renewable_models(
         config, generation_df, weather_df
     )
-    results["best_model"] = leaderboard.iloc[0]["model"]
+    best_model = leaderboard.iloc[0]["model"]
+    results["best_model"] = best_model
     results["best_rmse"] = float(leaderboard.iloc[0]["rmse"])
     results["baseline"] = baseline
 
-    # Step 4: Generate forecasts
-    forecasts = generate_renewable_forecasts(config, generation_df, weather_df)
+    # Step 4: Generate forecasts (use the best model from CV)
+    forecasts = generate_renewable_forecasts(
+        config, generation_df, weather_df, best_model=best_model
+    )
     results["forecast_rows"] = len(forecasts)
 
     if fetch_diagnostics is not None:

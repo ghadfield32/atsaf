@@ -54,10 +54,23 @@ def validate_generation_df(
         )
 
     if (work["y"] < 0).any():
+        neg_mask = work["y"] < 0
+        by_series = (
+            work[neg_mask]
+            .groupby("unique_id")
+            .agg(count=("y", "count"), min_y=("y", "min"), max_y=("y", "max"))
+            .reset_index()
+            .to_dict(orient="records")
+        )
+        sample = (
+            work.loc[neg_mask, ["unique_id", "ds", "y"]]
+            .head(10)
+            .to_dict(orient="records")
+        )
         return ValidationReport(
             False,
             "Negative generation values found",
-            {"neg_y": int((work["y"] < 0).sum())},
+            {"neg_y": int(neg_mask.sum()), "by_series": by_series, "sample": sample},
         )
 
     dup = work.duplicated(subset=["unique_id", "ds"]).sum()

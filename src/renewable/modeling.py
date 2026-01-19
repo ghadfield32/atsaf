@@ -401,6 +401,7 @@ class RenewableForecastModel:
         self._train_df = None  # contains y + exog columns
         self._exog_cols: list[str] = []
         self.fitted = False
+        self._use_log_transform = True  # Log transform for non-negative forecasts
 
     def prepare_training_df(self, df: pd.DataFrame, weather_df: Optional[pd.DataFrame]) -> pd.DataFrame:
         req = {"unique_id", "ds", "y"}
@@ -427,6 +428,16 @@ class RenewableForecastModel:
 
         work = _enforce_hourly_grid(work, label="generation", policy="drop_incomplete_series")
         work = _add_time_features(work)
+
+        # Apply log transform for non-negative forecasting
+        if self._use_log_transform:
+            if (work["y"] < 0).any():
+                raise RuntimeError(
+                    "[prepare_training_df] Cannot apply log transform: y contains negatives. "
+                    "Clean data upstream before modeling."
+                )
+            work["y"] = np.log1p(work["y"])  # log(y + 1)
+            print("[prepare_training_df] Applied log1p transform to y")
 
         if weather_df is not None and not weather_df.empty:
             if not {"ds", "region"}.issubset(weather_df.columns):
@@ -529,7 +540,7 @@ class RenewableForecastModel:
         keep = ["unique_id", "ds"] + self._exog_cols
         return X[keep].sort_values(["unique_id", "ds"]).reset_index(drop=True)
 
-    def predict(self, future_weather: pd.DataFrame) -> pd.DataFrame:
+    def predict(self, future_weather: pd.DataFrame, best_model: str = "MSTL_ARIMA") -> pd.DataFrame:
         if not self.fitted:
             raise RuntimeError("fit() first")
 
@@ -543,7 +554,35 @@ class RenewableForecastModel:
             level=list(self.confidence_levels),
         ).reset_index()
 
-        return fcst
+        # Rename model-specific columns to generic yhat format
+        rename_map = {best_model: "yhat"}
+        for lvl in self.confidence_levels:
+            lo_col = f"{best_model}-lo-{lvl}"
+            hi_col = f"{best_model}-hi-{lvl}"
+            if lo_col in fcst.columns:
+                rename_map[lo_col] = f"yhat_lo_{lvl}"
+            if hi_col in fcst.columns:
+                rename_map[hi_col] = f"yhat_hi_{lvl}"
+
+        fcst = fcst.rename(columns=rename_map)
+
+        # Inverse transform if log transform was applied
+        if self._use_log_transform:
+            for col in ["yhat"] + [f"yhat_lo_{lvl}" for lvl in self.confidence_levels] + [f"yhat_hi_{lvl}" for lvl in self.confidence_levels]:
+                if col in fcst.columns:
+                    # expm1 can produce small negatives when model predicts near-zero in log-space
+                    # e.g., expm1(-0.1) = exp(-0.1) - 1 ≈ -0.095
+                    # Clamp to 0 since generation cannot be negative (numerical edge case)
+                    fcst[col] = np.maximum(0, np.expm1(fcst[col]))
+            print("[predict] Applied expm1 inverse transform (clamped to 0)")
+
+        # Keep only the renamed yhat columns + core columns
+        keep_cols = ["unique_id", "ds", "yhat"]
+        for lvl in self.confidence_levels:
+            keep_cols.extend([f"yhat_lo_{lvl}", f"yhat_hi_{lvl}"])
+        keep_cols = [c for c in keep_cols if c in fcst.columns]
+
+        return fcst[keep_cols]
 
     def cross_validate(
         self,

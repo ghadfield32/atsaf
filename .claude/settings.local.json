@@ -10,7 +10,9 @@
       "Bash(uv run python:*)",
       "Bash(ls:*)",
       "Bash(du:*)",
-      "Bash(del \"c:\\\\docker_projects\\\\atsaf\\\\chapters\\\\renewable_energry_forecasting.ipynb\")"
+      "Bash(del \"c:\\\\docker_projects\\\\atsaf\\\\chapters\\\\renewable_energry_forecasting.ipynb\")",
+      "Bash(.\\\\.venv\\\\Scripts\\\\python.exe:*)",
+      "Bash(c:\\\\docker_projects\\\\atsaf\\\\.venv\\\\Scripts\\\\python.exe:*)"
     ]
   }
 }

@@ -70,6 +70,17 @@ def _summarize_generation_coverage(df: pd.DataFrame) -> dict:
     }
 
 
+def _read_previous_run_summary(data_dir: str) -> dict | None:
+    """Read previous run_log.json for rowcount comparison."""
+    path = Path(data_dir) / "run_log.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+
 def _summarize_negative_forecasts(
     df: pd.DataFrame,
     sample_rows: int = 5,
@@ -150,6 +161,42 @@ def run_hourly_pipeline() -> dict:
     forecasts_df = pd.read_parquet(cfg.forecasts_path())
     negative_forecasts = _summarize_negative_forecasts(forecasts_df)
 
+    # Quality gates
+    max_rowdrop_pct = _env_float("MAX_ROWDROP_PCT", 0.30)
+    max_neg_forecast_ratio = _env_float("MAX_NEG_FORECAST_RATIO", 0.10)
+
+    prev_run = _read_previous_run_summary(data_dir)
+    prev_gen_rows = 0
+    if prev_run:
+        prev_gen_rows = prev_run.get("pipeline_results", {}).get("generation_rows", 0)
+
+    curr_gen_rows = results.get("generation_rows", 0)
+    rowdrop_ok = True
+    if prev_gen_rows > 0:
+        floor_ok = int(prev_gen_rows * (1.0 - max_rowdrop_pct))
+        rowdrop_ok = curr_gen_rows >= floor_ok
+
+    neg_forecast_ratio = 0.0
+    if negative_forecasts["row_count"] > 0:
+        neg_forecast_ratio = (
+            negative_forecasts["negative_rows"] / negative_forecasts["row_count"]
+        )
+    neg_forecast_ok = neg_forecast_ratio <= max_neg_forecast_ratio
+
+    quality_gates = {
+        "rowdrop": {
+            "ok": rowdrop_ok,
+            "prev_rows": prev_gen_rows,
+            "curr_rows": curr_gen_rows,
+            "max_rowdrop_pct": max_rowdrop_pct,
+        },
+        "neg_forecast": {
+            "ok": neg_forecast_ok,
+            "ratio": neg_forecast_ratio,
+            "max_ratio": max_neg_forecast_ratio,
+        },
+    }
+
     run_log = {
         "run_at_utc": datetime.now(timezone.utc).isoformat(),
         "config": {
@@ -174,6 +221,7 @@ def run_hourly_pipeline() -> dict:
             "generation_coverage": generation_coverage,
             "negative_forecasts": negative_forecasts,
         },
+        "quality_gates": quality_gates,
     }
 
     Path(data_dir).mkdir(parents=True, exist_ok=True)
@@ -181,8 +229,21 @@ def run_hourly_pipeline() -> dict:
         json.dumps(run_log, indent=2, default=_json_default)
     )
 
+    # Check validation
     if not report.ok:
         raise SystemExit(f"VALIDATION_FAILED: {report.message} | {report.details}")
+
+    # Check quality gates
+    if not rowdrop_ok:
+        raise SystemExit(
+            f"QUALITY_GATE_FAILED: rowdrop | "
+            f"curr={curr_gen_rows} prev={prev_gen_rows} max_drop={max_rowdrop_pct:.0%}"
+        )
+    if not neg_forecast_ok:
+        raise SystemExit(
+            f"QUALITY_GATE_FAILED: neg_forecast | "
+            f"ratio={neg_forecast_ratio:.1%} max={max_neg_forecast_ratio:.0%}"
+        )
 
     return run_log
 

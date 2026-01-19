@@ -124,10 +124,80 @@ Added `np.maximum(0, np.expm1(x))` in inverse transform. This is NOT defensive c
 
 ---
 
+## 2026-01-19: MISO_SUN Night Values Investigation
+
+### Question
+MISO_SUN chart shows flat values until ~12:00 UTC, then spikes. Is this defensive coding masking real forecasts?
+
+### Investigation
+Examined forecast values and training data for all SUN series:
+
+| Series | Night Zeros in Training | Night Forecast |
+|--------|------------------------|----------------|
+| CALI_SUN | 68.5% | ~0 MWh (correct) |
+| ERCO_SUN | 66.8% | ~0.14 MWh (correct) |
+| MISO_SUN | **0%** (min=1) | 9-15 MWh (correct) |
+
+### Root Cause
+**EIA data quality issue for MISO region**: The EIA API reports small positive values (1-132 MWh) for MISO solar at night instead of zeros. This is an upstream data issue, not a modeling issue.
+
+### Key Finding
+- The model is correctly learning from training data
+- MISO_SUN forecasts 9-15 MWh at night because that's what the training data shows
+- Chart appears flat because y-axis scales to 60k (9-15 MWh is invisible at that scale)
+- **No defensive coding or artificial values** - forecasts are honest
+
+### Data is in UTC
+- CALI (UTC-8): UTC 08:00-15:00 = Pacific 00:00-07:00 (night) → zeros ✓
+- MISO (UTC-6): UTC 06:00-13:00 = Central 00:00-07:00 (night) → small positives (EIA issue)
+
+---
+
+## 2026-01-19: Open-Meteo Archive API Timeout Investigation
+
+### Problem
+GitHub Actions pipeline failed with weather API timeouts:
+```
+[FAIL] Weather for CALI: HTTPSConnectionPool... Read timed out
+[FAIL] Weather for ERCO: Expecting value: line 1 column 1 (char 0)
+[FAIL] Weather for MISO: HTTPSConnectionPool... Read timed out
+RuntimeError: [weather][ALIGN] Missing weather after merge rows=4320
+```
+
+### Root Cause Analysis
+1. **Historical API (archive-api.open-meteo.com)**: Timed out for all 3 regions
+2. **Forecast API (api.open-meteo.com)**: Worked fine (68 rows × 3 regions = 204 rows)
+3. **Merge failed**: No overlap between generation timestamps (2025-12-20 to 2026-01-19) and forecast-only weather (future timestamps)
+
+**Key finding**: The retry config only handled HTTP status codes (429, 500, etc.), NOT socket timeouts:
+```python
+retries = Retry(
+    total=3,
+    status_forcelist=[429, 500, 502, 503, 504],  # Socket timeouts NOT covered
+)
+```
+
+### Resolution
+Enhanced `open_meteo.py` with:
+1. **Socket timeout retry**: Added `connect=3, read=3` to Retry config
+2. **Increased timeout**: 30s → 60s
+3. **Increased backoff**: 0.5s → 1.0s (exponential: 1s, 2s, 4s)
+4. **Enhanced error logging**: Exception type classification (TIMEOUT, CONNECTION_ERROR, JSON_PARSE_ERROR)
+5. **JSON error diagnostics**: Capture response body preview when JSON parsing fails
+
+### Files Changed
+- `src/renewable/open_meteo.py` - Retry config, timeout, error handling
+
+---
+
 ## Changelog
 
 | Date | Component | Change |
 |------|-----------|--------|
+| 2026-01-19 | open_meteo.py | Added socket timeout retry (connect=3, read=3), increased timeout to 60s |
+| 2026-01-19 | open_meteo.py | Enhanced error logging with exception type classification |
+| 2026-01-19 | open_meteo.py | Added JSON response preview on parse failures |
+| 2026-01-19 | INVESTIGATION | MISO_SUN night values verified correct (EIA data quality issue) |
 | 2026-01-19 | modeling.py | Added np.maximum(0, expm1) to handle zeros edge case |
 | 2026-01-19 | modeling.py | Added log transform (log1p/expm1) for non-negative forecasts |
 | 2026-01-19 | eia_renewable.py | Added negative value debug logging, changed filter to clamp |

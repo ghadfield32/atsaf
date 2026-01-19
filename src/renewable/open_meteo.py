@@ -38,7 +38,7 @@ class OpenMeteoRenewable:
         "cloud_cover",
     ]
 
-    def __init__(self, timeout: int = 30, *, strict: bool = True):
+    def __init__(self, timeout: int = 60, *, strict: bool = True):
         self.timeout = timeout
         self.strict = strict
         self.endpoints = OpenMeteoEndpoints()
@@ -48,9 +48,11 @@ class OpenMeteoRenewable:
         session = requests.Session()
         retries = Retry(
             total=3,
-            backoff_factor=0.5,
+            backoff_factor=1.0,  # 1s, 2s, 4s between retries
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=frozenset(["GET"]),
+            connect=3,  # Retry on connection errors
+            read=3,     # Retry on read timeouts
         )
         session.mount("https://", HTTPAdapter(max_retries=retries))
         return session
@@ -82,7 +84,17 @@ class OpenMeteoRenewable:
             print(f"[OPENMETEO][HIST] status={resp.status_code} url={resp.url}")
         resp.raise_for_status()
 
-        return self._parse_response(resp.json(), variables, debug=debug, request_url=resp.url)
+        try:
+            data = resp.json()
+        except requests.exceptions.JSONDecodeError as e:
+            # Log actual response content for debugging
+            content_preview = resp.text[:500] if resp.text else "(empty)"
+            raise ValueError(
+                f"[OPENMETEO][HIST] Invalid JSON response. "
+                f"status={resp.status_code} content_preview={content_preview}"
+            ) from e
+
+        return self._parse_response(data, variables, debug=debug, request_url=resp.url)
 
     def fetch_forecast(
         self,
@@ -110,7 +122,16 @@ class OpenMeteoRenewable:
             print(f"[OPENMETEO][FCST] status={resp.status_code} url={resp.url}")
         resp.raise_for_status()
 
-        df = self._parse_response(resp.json(), variables, debug=debug, request_url=resp.url)
+        try:
+            data = resp.json()
+        except requests.exceptions.JSONDecodeError as e:
+            content_preview = resp.text[:500] if resp.text else "(empty)"
+            raise ValueError(
+                f"[OPENMETEO][FCST] Invalid JSON response. "
+                f"status={resp.status_code} content_preview={content_preview}"
+            ) from e
+
+        df = self._parse_response(data, variables, debug=debug, request_url=resp.url)
 
         # Trim to requested horizon (ds is naive UTC)
         if len(df) > 0:
@@ -149,8 +170,14 @@ class OpenMeteoRenewable:
                 df = self.fetch_for_region(region, start_date, end_date, debug=debug)
                 all_dfs.append(df)
                 print(f"[OK] Weather for {region}: {len(df)} rows")
+            except requests.exceptions.Timeout as e:
+                print(f"[FAIL] Weather for {region}: TIMEOUT after {self.timeout}s - {type(e).__name__}: {e}")
+            except requests.exceptions.ConnectionError as e:
+                print(f"[FAIL] Weather for {region}: CONNECTION_ERROR - {type(e).__name__}: {e}")
+            except requests.exceptions.JSONDecodeError as e:
+                print(f"[FAIL] Weather for {region}: JSON_PARSE_ERROR - {type(e).__name__}: {e}")
             except Exception as e:
-                print(f"[FAIL] Weather for {region}: {e}")
+                print(f"[FAIL] Weather for {region}: {type(e).__name__}: {e}")
 
         if not all_dfs:
             return pd.DataFrame()
@@ -250,8 +277,14 @@ class OpenMeteoRenewable:
                 )
                 all_dfs.append(df)
                 print(f"[OK] Forecast weather for {region}: {len(df)} rows")
+            except requests.exceptions.Timeout as e:
+                print(f"[FAIL] Forecast weather for {region}: TIMEOUT after {self.timeout}s - {type(e).__name__}: {e}")
+            except requests.exceptions.ConnectionError as e:
+                print(f"[FAIL] Forecast weather for {region}: CONNECTION_ERROR - {type(e).__name__}: {e}")
+            except requests.exceptions.JSONDecodeError as e:
+                print(f"[FAIL] Forecast weather for {region}: JSON_PARSE_ERROR - {type(e).__name__}: {e}")
             except Exception as e:
-                print(f"[FAIL] Forecast weather for {region}: {e}")
+                print(f"[FAIL] Forecast weather for {region}: {type(e).__name__}: {e}")
 
         if not all_dfs:
             return pd.DataFrame()

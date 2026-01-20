@@ -190,6 +190,62 @@ Enhanced `open_meteo.py` with:
 
 ---
 
+## 2026-01-20: Per-Region EIA Publishing Lag Fix
+
+### Problem
+GitHub Actions pipeline failed with:
+```
+RuntimeError: [future_weather][ALIGN] Missing future weather rows=10
+Sample: ERCO_SUN 2026-01-19 06:00:00   ERCO   NaN   NaN ...
+        MISO_SUN 2026-01-19 05:00:00   MISO   NaN   NaN ...
+```
+
+Generation data ended at different times per region:
+- CALI: 05:00 UTC
+- ERCO: 06:00 UTC (latest)
+- MISO: 04:00 UTC (earliest, 2h lag behind ERCO)
+
+### Root Cause Analysis
+
+**The mismatch:**
+1. **`tasks.py:375`** used **global max** to filter weather:
+   ```python
+   last_gen_ds = generation_df["ds"].max()  # Returns 06:00 (ERCO's max)
+   future_weather = weather_df[weather_df["ds"] > last_gen_ds]  # Only 07:00+
+   ```
+
+2. **`modeling.py:510`** used **per-series max** to create forecast grids:
+   ```python
+   last_ds = self._train_df.groupby("unique_id")["ds"].max()  # Per-series
+   # MISO needs forecasts from 05:00, CALI from 06:00, ERCO from 07:00
+   ```
+
+3. **Merge failed** because MISO and CALI needed weather from 05:00/06:00, but `future_weather` only had 07:00+.
+
+**Why this happened:** EIA publishes data with different lags per region. This is normal operational behavior, not a bug.
+
+### Resolution
+
+**Changed `tasks.py` to use MIN of max timestamps:**
+```python
+per_series_max = generation_df.groupby("unique_id")["ds"].max()
+min_of_max = per_series_max.min()  # Use earliest series' max
+future_weather = weather_df[weather_df["ds"] > min_of_max]  # Covers all series
+```
+
+**Added diagnostics:**
+- Log per-series max timestamps and delta between min/max
+- Enhanced error message in `build_future_X_df` with per-region gap details
+
+**Fixed warnings:**
+- FutureWarning in `modeling.py`: Added `include_groups=False` to `groupby.apply`
+
+### Files Changed
+- `src/renewable/tasks.py` - Changed future_weather filtering to use min of per-series max
+- `src/renewable/modeling.py` - Enhanced error diagnostics, fixed FutureWarning
+
+---
+
 ## 2026-01-19: MAX_LAG_HOURS Configuration Fix
 
 ### Problem
@@ -225,6 +281,10 @@ VALIDATION_FAILED: Data not fresh enough | {'now_utc': '2026-01-19T22:00:00+00:0
 
 | Date | Component | Change |
 |------|-----------|--------|
+| 2026-01-20 | tasks.py | Fixed future_weather filtering to use min of per-series max timestamps |
+| 2026-01-20 | tasks.py | Added per-series max timestamp debug logging |
+| 2026-01-20 | modeling.py | Enhanced build_future_X_df error with per-region gap details |
+| 2026-01-20 | modeling.py | Fixed FutureWarning: added include_groups=False to groupby.apply |
 | 2026-01-19 | renewable_hourly.yml | Changed MAX_LAG_HOURS from 3 to 48 (EIA publishing lag) |
 | 2026-01-19 | run_hourly.py | Changed default max_lag_hours from 3 to 48 |
 | 2026-01-19 | validation.py | Fixed deprecated floor("H") → floor("h") |

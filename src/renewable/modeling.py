@@ -341,7 +341,7 @@ def compute_baseline_metrics(
 
     per_window = (
         cv_df.groupby(["unique_id", "cutoff"], sort=False, dropna=False)
-        .apply(_window_metrics)
+        .apply(_window_metrics, include_groups=False)
         .reset_index()
     )
 
@@ -531,8 +531,18 @@ class RenewableForecastModel:
             missing_any = X[needed].isna().any(axis=1)
             if missing_any.any():
                 sample = X.loc[missing_any, ["unique_id", "ds", "region"] + needed].head(10)
+
+                # Show per-region gap details
+                missing_by_region = (
+                    X[missing_any]
+                    .groupby("region")["ds"]
+                    .agg(["min", "max", "count"])
+                    .to_dict(orient="index")
+                )
+
                 raise RuntimeError(
-                    f"[future_weather][ALIGN] Missing future weather rows={int(missing_any.sum())}. "
+                    f"[future_weather][ALIGN] Missing future weather rows={int(missing_any.sum())}.\n"
+                    f"Per-region gaps: {missing_by_region}\n"
                     f"Sample:\n{sample.to_string(index=False)}"
                 )
 

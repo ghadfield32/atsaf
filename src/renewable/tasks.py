@@ -371,14 +371,27 @@ def generate_renewable_forecasts(
     # Fit uses only historical generation timestamps, weather merge will fail-loud if missing.
     model.fit(generation_df, weather_df)
 
-    # Future weather must cover the horizon after the latest generation timestamp.
-    last_gen_ds = generation_df["ds"].max()
-    future_weather = weather_df[weather_df["ds"] > last_gen_ds].copy()
+    # Future weather must cover the horizon after the EARLIEST series' last timestamp
+    # (different regions may have different publishing lags)
+    per_series_max = generation_df.groupby("unique_id")["ds"].max()
+    logger.info(f"[generate_forecasts] Per-series max timestamps:\n{per_series_max.to_dict()}")
+
+    min_of_max = per_series_max.min()
+    global_max = generation_df["ds"].max()
+
+    logger.info(
+        f"[generate_forecasts] Min of series maxes: {min_of_max}, "
+        f"Global max: {global_max}, "
+        f"Delta: {(global_max - min_of_max).total_seconds() / 3600:.1f}h"
+    )
+
+    # Use min of max timestamps to ensure all series have weather for their forecasts
+    future_weather = weather_df[weather_df["ds"] > min_of_max].copy()
 
     if future_weather.empty:
         raise RuntimeError(
-            "[generate_forecasts] No future weather rows found after last generation timestamp. "
-            f"last_gen_ds={last_gen_ds}"
+            "[generate_forecasts] No future weather rows found after earliest series max. "
+            f"min_of_max={min_of_max}"
         )
 
     forecasts = model.predict(future_weather=future_weather, best_model=best_model)

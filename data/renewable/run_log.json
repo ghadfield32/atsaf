@@ -1,5 +1,5 @@
 {
-  "run_at_utc": "2026-01-20T19:57:17.165157+00:00",
+  "run_at_utc": "2026-01-20T20:47:13.590987+00:00",
   "config": {
     "regions": [
       "CALI",
@@ -21,7 +21,7 @@
   "pipeline_results": {
     "generation_rows": 4326,
     "series_count": 6,
-    "weather_rows": 2364,
+    "weather_rows": 2367,
     "best_model": "AutoARIMA",
     "best_rmse": 0.5225881450886889,
     "baseline": {
@@ -125,7 +125,7 @@
         "empty": false
       },
       {
-        "region": "ERCO",
+        "region": "CALI",
         "fuel_type": "SUN",
         "start_date": "2025-12-21",
         "end_date": "2026-01-20",
@@ -135,7 +135,7 @@
         "empty": false
       },
       {
-        "region": "CALI",
+        "region": "ERCO",
         "fuel_type": "SUN",
         "start_date": "2025-12-21",
         "end_date": "2026-01-20",
@@ -163,7 +163,7 @@
       "row_count": 4326,
       "series_count": 6,
       "max_ds": "2026-01-20T00:00:00+00:00",
-      "lag_hours": 19.0,
+      "lag_hours": 20.0,
       "worst_missing_ratio": 0.0
     }
   },
@@ -200,7 +200,7 @@
         "empty": false
       },
       {
-        "region": "ERCO",
+        "region": "CALI",
         "fuel_type": "SUN",
         "start_date": "2025-12-21",
         "end_date": "2026-01-20",
@@ -210,7 +210,7 @@
         "empty": false
       },
       {
-        "region": "CALI",
+        "region": "ERCO",
         "fuel_type": "SUN",
         "start_date": "2025-12-21",
         "end_date": "2026-01-20",

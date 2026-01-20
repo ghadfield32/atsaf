@@ -92,7 +92,7 @@ def validate_generation_df(
                 {"missing_series": missing_series, "present_series": present},
             )
 
-    now_utc = pd.Timestamp.now(tz="UTC").floor("H")
+    now_utc = pd.Timestamp.now(tz="UTC").floor("h")
     max_ds = work["ds"].max()
     lag_hours = (now_utc - max_ds).total_seconds() / 3600.0
     if lag_hours > max_lag_hours:

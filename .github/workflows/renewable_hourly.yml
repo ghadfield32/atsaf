@@ -24,7 +24,7 @@ jobs:
       RENEWABLE_HORIZON: "24"
       RENEWABLE_CV_WINDOWS: "2"
       RENEWABLE_CV_STEP_SIZE: "168"
-      MAX_LAG_HOURS: "3"
+      MAX_LAG_HOURS: "48"  # EIA publishes hourly data with 12-24h delay
       MAX_MISSING_RATIO: "0.02"
       RENEWABLE_DATA_DIR: "data/renewable"
       RENEWABLE_N_JOBS: "1"

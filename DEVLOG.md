@@ -190,10 +190,44 @@ Enhanced `open_meteo.py` with:
 
 ---
 
+## 2026-01-19: MAX_LAG_HOURS Configuration Fix
+
+### Problem
+GitHub Actions pipeline failed with:
+```
+VALIDATION_FAILED: Data not fresh enough | {'now_utc': '2026-01-19T22:00:00+00:00', 'max_ds': '2026-01-19T00:00:00+00:00', 'lag_hours': 22.0}
+```
+
+### Root Cause Analysis
+**Two validation calls with conflicting thresholds:**
+
+| Location | max_lag_hours | Result |
+|----------|--------------|--------|
+| tasks.py:494 | 48h | PASSES |
+| run_hourly.py:154 | 3h (from workflow env) | FAILS |
+| renewable_hourly.yml:27 | "3" | Sets incorrect threshold |
+
+**Key insight**: EIA hourly data has a typical publishing lag of **12-24 hours**. A 3-hour threshold is completely unrealistic.
+
+### Resolution
+1. Changed `MAX_LAG_HOURS` from 3 to 48 in `renewable_hourly.yml`
+2. Changed default from 3 to 48 in `run_hourly.py`
+3. Fixed FutureWarning: Changed `floor("H")` to `floor("h")` in `validation.py`
+
+### Files Changed
+- `.github/workflows/renewable_hourly.yml` - MAX_LAG_HOURS: 3 → 48
+- `src/renewable/jobs/run_hourly.py` - Default max_lag_hours: 3 → 48
+- `src/renewable/validation.py` - Fixed deprecated "H" → "h" frequency
+
+---
+
 ## Changelog
 
 | Date | Component | Change |
 |------|-----------|--------|
+| 2026-01-19 | renewable_hourly.yml | Changed MAX_LAG_HOURS from 3 to 48 (EIA publishing lag) |
+| 2026-01-19 | run_hourly.py | Changed default max_lag_hours from 3 to 48 |
+| 2026-01-19 | validation.py | Fixed deprecated floor("H") → floor("h") |
 | 2026-01-19 | open_meteo.py | Added socket timeout retry (connect=3, read=3), increased timeout to 60s |
 | 2026-01-19 | open_meteo.py | Enhanced error logging with exception type classification |
 | 2026-01-19 | open_meteo.py | Added JSON response preview on parse failures |

@@ -149,7 +149,7 @@ def run_hourly_pipeline() -> dict:
     gen_df = pd.read_parquet(gen_path)
     generation_coverage = _summarize_generation_coverage(gen_df)
 
-    max_lag_hours = _env_int("MAX_LAG_HOURS", 3)
+    max_lag_hours = _env_int("MAX_LAG_HOURS", 48)  # EIA publishes with 12-24h delay
     max_missing_ratio = _env_float("MAX_MISSING_RATIO", 0.02)
     report = validate_generation_df(
         gen_df,

@@ -1,5 +1,5 @@
 {
-  "run_at_utc": "2026-01-20T17:40:12.528151+00:00",
+  "run_at_utc": "2026-01-20T18:41:12.979976+00:00",
   "config": {
     "regions": [
       "CALI",
@@ -21,7 +21,7 @@
   "pipeline_results": {
     "generation_rows": 4326,
     "series_count": 6,
-    "weather_rows": 2358,
+    "weather_rows": 2361,
     "best_model": "AutoARIMA",
     "best_rmse": 0.5225881450886889,
     "baseline": {
@@ -95,7 +95,7 @@
     "forecast_rows": 144,
     "fetch_diagnostics": [
       {
-        "region": "ERCO",
+        "region": "MISO",
         "fuel_type": "WND",
         "start_date": "2025-12-21",
         "end_date": "2026-01-20",
@@ -105,7 +105,7 @@
         "empty": false
       },
       {
-        "region": "MISO",
+        "region": "ERCO",
         "fuel_type": "WND",
         "start_date": "2025-12-21",
         "end_date": "2026-01-20",
@@ -125,7 +125,7 @@
         "empty": false
       },
       {
-        "region": "MISO",
+        "region": "CALI",
         "fuel_type": "SUN",
         "start_date": "2025-12-21",
         "end_date": "2026-01-20",
@@ -145,7 +145,7 @@
         "empty": false
       },
       {
-        "region": "CALI",
+        "region": "MISO",
         "fuel_type": "SUN",
         "start_date": "2025-12-21",
         "end_date": "2026-01-20",
@@ -163,14 +163,14 @@
       "row_count": 4326,
       "series_count": 6,
       "max_ds": "2026-01-20T00:00:00+00:00",
-      "lag_hours": 17.0,
+      "lag_hours": 18.0,
       "worst_missing_ratio": 0.0
     }
   },
   "diagnostics": {
     "fetch": [
       {
-        "region": "ERCO",
+        "region": "MISO",
         "fuel_type": "WND",
         "start_date": "2025-12-21",
         "end_date": "2026-01-20",
@@ -180,7 +180,7 @@
         "empty": false
       },
       {
-        "region": "MISO",
+        "region": "ERCO",
         "fuel_type": "WND",
         "start_date": "2025-12-21",
         "end_date": "2026-01-20",
@@ -200,7 +200,7 @@
         "empty": false
       },
       {
-        "region": "MISO",
+        "region": "CALI",
         "fuel_type": "SUN",
         "start_date": "2025-12-21",
         "end_date": "2026-01-20",
@@ -220,7 +220,7 @@
         "empty": false
       },
       {
-        "region": "CALI",
+        "region": "MISO",
         "fuel_type": "SUN",
         "start_date": "2025-12-21",
         "end_date": "2026-01-20",

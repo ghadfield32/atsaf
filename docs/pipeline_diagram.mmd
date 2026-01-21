@@ -1,0 +1,52 @@
+%%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor': '#3B82F6', 'secondaryColor': '#8B5CF6', 'tertiaryColor': '#1F2937', 'primaryTextColor': '#F9FAFB', 'lineColor': '#6B7280'}}}%%
+
+flowchart TB
+    subgraph SOURCES["DATA SOURCES"]
+        EIA["<b>EIA API</b><br/>Wind & Solar Generation<br/>5 US Regions<br/><i>12-48h publishing lag</i>"]
+        WEATHER["<b>Open-Meteo</b><br/>7 Weather Variables<br/>Historical + Forecast<br/><i>Updated 4x daily</i>"]
+    end
+
+    subgraph VALIDATION["VALIDATION PIPELINE"]
+        V1["Column Validation"]
+        V2["No Negatives"]
+        V3["Freshness Check"]
+        V4["Hourly Grid Complete"]
+    end
+
+    subgraph MODELING["ML MODELING"]
+        MODELS["<b>StatsForecast</b><br/>MSTL • AutoARIMA<br/>AutoETS • SeasonalNaive"]
+        TRANSFORM["<b>Log Transform</b><br/>y → log1p(y)<br/>Guarantees ŷ ≥ 0"]
+    end
+
+    subgraph OUTPUTS["OUTPUTS"]
+        FORECASTS["<b>24h Forecasts</b><br/>Point + 80%/95% CI<br/>Per region × fuel"]
+        GATES["<b>Quality Gates</b><br/>Rowdrop Detection<br/>Drift Monitoring"]
+    end
+
+    subgraph DELIVERY["DELIVERY"]
+        GIT["Git Commit<br/>Version Control"]
+        DASH["Streamlit<br/>Dashboard"]
+    end
+
+    EIA --> V1
+    WEATHER --> V1
+    V1 --> V2 --> V3 --> V4
+    V4 --> MODELS
+    MODELS <--> TRANSFORM
+    TRANSFORM --> FORECASTS
+    FORECASTS --> GATES
+    GATES --> GIT
+    GATES --> DASH
+
+    style EIA fill:#3B82F6
+    style WEATHER fill:#F59E0B
+    style V1 fill:#10B981
+    style V2 fill:#10B981
+    style V3 fill:#10B981
+    style V4 fill:#10B981
+    style MODELS fill:#8B5CF6
+    style TRANSFORM fill:#8B5CF6
+    style FORECASTS fill:#14B8A6
+    style GATES fill:#EF4444
+    style GIT fill:#6B7280
+    style DASH fill:#6B7280

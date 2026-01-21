@@ -1,18 +1,14 @@
+# file: src/renewable/dag_builder.py
 """Renewable pipeline DAG builder for Airflow."""
-
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
-try:
-    from airflow import DAG
-    from airflow.operators.python import PythonOperator
-    AIRFLOW_AVAILABLE = True
-except Exception:
-    AIRFLOW_AVAILABLE = False
-    DAG = None
-    PythonOperator = None
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+AIRFLOW_AVAILABLE = True
+
 
 
 DEFAULT_ARGS = {

@@ -22,8 +22,15 @@ import pandas as pd
 from src.renewable.eia_renewable import EIARenewableFetcher
 from src.renewable.modeling import (
     RenewableForecastModel,
+    RenewableLGBMForecaster,
     _log_series_summary,
+    _add_time_features,
     compute_baseline_metrics,
+    WEATHER_VARS,
+)
+from src.renewable.model_interpretability import (
+    InterpretabilityReport,
+    generate_full_interpretability_report,
 )
 from src.renewable.open_meteo import OpenMeteoRenewable
 from src.renewable.regions import REGIONS, list_regions
@@ -45,6 +52,7 @@ class RenewablePipelineConfig:
     # Forecast parameters
     horizon: int = 24
     confidence_levels: tuple[int, int] = (80, 95)
+    horizon_preset: Optional[str] = None  # "24h" | "48h" | "72h"
 
     # CV parameters
     cv_windows: int = 5
@@ -54,7 +62,23 @@ class RenewablePipelineConfig:
     data_dir: str = "data/renewable"
     overwrite: bool = False
 
+    # Horizon preset definitions (class-level constant)
+    _PRESETS = {
+        "24h": {"horizon": 24, "cv_windows": 2, "lookback_days": 15},
+        "48h": {"horizon": 48, "cv_windows": 3, "lookback_days": 21},
+        "72h": {"horizon": 72, "cv_windows": 3, "lookback_days": 28},
+    }
+
     def __post_init__(self):
+        # Apply horizon preset if specified
+        if self.horizon_preset and self.horizon_preset in self._PRESETS:
+            preset = self._PRESETS[self.horizon_preset]
+            # Use object.__setattr__ since this is a dataclass
+            object.__setattr__(self, "horizon", preset["horizon"])
+            object.__setattr__(self, "cv_windows", preset["cv_windows"])
+            object.__setattr__(self, "lookback_days", preset["lookback_days"])
+            logger.info(f"[config] Applied preset '{self.horizon_preset}': horizon={preset['horizon']}h")
+
         # Set default dates if not provided
         if not self.end_date:
             self.end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -62,6 +86,33 @@ class RenewablePipelineConfig:
             end = datetime.strptime(self.end_date, "%Y-%m-%d")
             start = end - timedelta(days=self.lookback_days)
             self.start_date = start.strftime("%Y-%m-%d")
+
+        # Validate configuration
+        warnings = self._validate()
+        for warning in warnings:
+            logger.warning(f"[config] {warning}")
+
+    def _validate(self) -> list[str]:
+        """Validate configuration and return warnings."""
+        warnings = []
+
+        # Check minimum data requirement
+        available_hours = self.lookback_days * 24
+        required_hours = self.horizon + (self.cv_windows * self.cv_step_size)
+        if available_hours < required_hours:
+            warnings.append(
+                f"Insufficient data: need {required_hours}h, have {available_hours}h. "
+                f"Increase lookback_days to {(required_hours // 24) + 1} or reduce cv_windows."
+            )
+
+        # Warn about accuracy degradation
+        if self.horizon > 72:
+            warnings.append(
+                f"Horizon {self.horizon}h exceeds recommended max (72h). "
+                f"Weather forecast accuracy degrades significantly beyond 3 days."
+            )
+
+        return warnings
 
     def generation_path(self) -> Path:
         return Path(self.data_dir) / "generation.parquet"
@@ -74,6 +125,9 @@ class RenewablePipelineConfig:
 
     def baseline_path(self) -> Path:
         return Path(self.data_dir) / "baseline.json"
+
+    def interpretability_dir(self) -> Path:
+        return Path(self.data_dir) / "interpretability"
 
 
 def fetch_renewable_data(
@@ -340,6 +394,123 @@ def train_renewable_models(
     return cv_results, leaderboard, baseline
 
 
+def train_interpretability_models(
+    config: RenewablePipelineConfig,
+    generation_df: Optional[pd.DataFrame] = None,
+    weather_df: Optional[pd.DataFrame] = None,
+) -> dict[str, InterpretabilityReport]:
+    """Train LightGBM models and generate interpretability reports per series.
+
+    This trains a separate LightGBM model for each series (region × fuel type)
+    and generates SHAP, partial dependence, and feature importance artifacts.
+
+    Note: LightGBM is used for interpretability only. The primary forecasts
+    come from statistical models (MSTL/ARIMA) which provide better uncertainty
+    quantification.
+
+    Args:
+        config: Pipeline configuration
+        generation_df: Generation data (loads from file if None)
+        weather_df: Weather data (loads from file if None)
+
+    Returns:
+        Dict mapping series_id -> InterpretabilityReport
+    """
+    # Load data if not provided
+    if generation_df is None:
+        generation_df = pd.read_parquet(config.generation_path())
+    if weather_df is None:
+        weather_df = pd.read_parquet(config.weather_path())
+
+    logger.info(f"[train_interpretability] Training LightGBM for {generation_df['unique_id'].nunique()} series")
+
+    # Ensure datetime types
+    generation_df = generation_df.copy()
+    generation_df["ds"] = pd.to_datetime(generation_df["ds"], errors="raise")
+    weather_df = weather_df.copy()
+    weather_df["ds"] = pd.to_datetime(weather_df["ds"], errors="raise")
+
+    reports: dict[str, InterpretabilityReport] = {}
+    output_dir = config.interpretability_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for uid in sorted(generation_df["unique_id"].unique()):
+        logger.info(f"[train_interpretability] Processing {uid}...")
+
+        # Extract series data
+        series_data = generation_df[generation_df["unique_id"] == uid].copy()
+        series_data = series_data.sort_values("ds")
+
+        # Prepare target series with proper frequency
+        y = series_data.set_index("ds")["y"]
+        y.index = pd.DatetimeIndex(y.index, freq="h")  # Set hourly frequency
+
+        # Prepare exogenous features
+        region = uid.split("_")[0]
+        series_weather = weather_df[weather_df["region"] == region].copy()
+
+        if series_weather.empty:
+            logger.warning(f"[train_interpretability] No weather data for region {region}, skipping {uid}")
+            continue
+
+        # Merge weather to series timestamps
+        series_data = series_data.merge(
+            series_weather[["ds"] + [c for c in WEATHER_VARS if c in series_weather.columns]],
+            on="ds",
+            how="left",
+        )
+
+        # Add time features
+        series_data = _add_time_features(series_data)
+
+        # Build exog DataFrame aligned with y
+        exog_cols = ["hour_sin", "hour_cos", "dow_sin", "dow_cos"]
+        exog_cols += [c for c in WEATHER_VARS if c in series_data.columns]
+        exog = series_data.set_index("ds")[exog_cols]
+
+        # Check for missing weather
+        missing_weather = exog.isna().any(axis=1).sum()
+        if missing_weather > 0:
+            logger.warning(f"[train_interpretability] {uid}: {missing_weather} rows with missing weather, filling with ffill/bfill")
+            exog = exog.ffill().bfill()
+
+        # Fit LightGBM forecaster
+        try:
+            lgbm = RenewableLGBMForecaster(
+                horizon=config.horizon,
+                lags=168,  # 7 days of lags
+                rolling_window_sizes=[24, 168],  # 1 day, 1 week
+            )
+            lgbm.fit(y=y, exog=exog)
+
+            # Create training matrices for SHAP analysis
+            X_train, y_train = lgbm.create_train_X_y(y=y, exog=exog)
+
+            # Generate interpretability report
+            series_output_dir = output_dir / uid
+            report = generate_full_interpretability_report(
+                forecaster=lgbm.forecaster,
+                X_train=X_train,
+                series_id=uid,
+                output_dir=series_output_dir,
+                top_n_features=5,
+                shap_sample_frac=0.5,
+                shap_max_samples=1000,
+            )
+            reports[uid] = report
+
+            logger.info(
+                f"[train_interpretability] {uid}: top_features={report.top_features[:3]}"
+            )
+
+        except Exception as e:
+            logger.error(f"[train_interpretability] {uid}: Failed to train - {e}")
+            continue
+
+    logger.info(f"[train_interpretability] Generated {len(reports)} interpretability reports")
+    return reports
+
+
 def generate_renewable_forecasts(
     config: RenewablePipelineConfig,
     generation_df: Optional[pd.DataFrame] = None,
@@ -394,7 +565,15 @@ def generate_renewable_forecasts(
             f"min_of_max={min_of_max}"
         )
 
+    # Generate forecasts using best model from CV
+    # The predict() method now supports best_model parameter to filter output
+    logger.info(f"[generate_forecasts] Generating predictions using model: {best_model}")
     forecasts = model.predict(future_weather=future_weather, best_model=best_model)
+
+    logger.info(
+        f"[generate_forecasts] Generated {len(forecasts)} forecast rows "
+        f"for {forecasts['unique_id'].nunique()} series"
+    )
 
     forecasts.to_parquet(output_path, index=False)
     logger.info(f"[generate_forecasts] Saved: {output_path} ({len(forecasts)} rows)")
@@ -521,12 +700,34 @@ def run_full_pipeline(
     results["best_model"] = best_model
     results["best_rmse"] = float(leaderboard.iloc[0]["rmse"])
     results["baseline"] = baseline
+    # Save full leaderboard for dashboard display
+    results["leaderboard"] = leaderboard.to_dict(orient="records")
 
     # Step 4: Generate forecasts (use the best model from CV)
     forecasts = generate_renewable_forecasts(
         config, generation_df, weather_df, best_model=best_model
     )
     results["forecast_rows"] = len(forecasts)
+
+    # Step 5: Train LightGBM models and generate interpretability reports
+    # (LightGBM is for interpretability only - MSTL/ARIMA provide primary forecasts)
+    try:
+        interpretability_reports = train_interpretability_models(
+            config, generation_df, weather_df
+        )
+        results["interpretability"] = {
+            "series_count": len(interpretability_reports),
+            "series": list(interpretability_reports.keys()),
+            "output_dir": str(config.interpretability_dir()),
+        }
+
+        # Add top features summary per series
+        for uid, report in interpretability_reports.items():
+            results["interpretability"][f"{uid}_top_features"] = report.top_features[:3]
+
+    except Exception as e:
+        logger.warning(f"[pipeline] Interpretability training failed (non-fatal): {e}")
+        results["interpretability"] = {"error": str(e)}
 
     if fetch_diagnostics is not None:
         results["fetch_diagnostics"] = fetch_diagnostics

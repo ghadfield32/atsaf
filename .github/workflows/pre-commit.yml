@@ -1,3 +1,4 @@
+# file: .github/workflows/pre-commit.yml
 name: pre-commit
 
 on:

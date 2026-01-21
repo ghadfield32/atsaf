@@ -88,11 +88,12 @@ def main():
             run_pipeline_from_dashboard(db_path, selected_regions, fuel_type)
 
     # Main content tabs
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📈 Forecasts",
         "⚠️ Drift Monitor",
         "📊 Coverage",
         "🌤️ Weather",
+        "🔍 Interpretability",
     ])
 
     with tab1:
@@ -106,6 +107,9 @@ def main():
 
     with tab4:
         render_weather_tab(db_path, selected_regions)
+
+    with tab5:
+        render_interpretability_tab(selected_regions, fuel_type)
 
 
 def render_forecasts_tab(db_path: str, regions: list, fuel_type: str, *, show_debug: bool = False):
@@ -132,6 +136,34 @@ def render_forecasts_tab(db_path: str, regions: list, fuel_type: str, *, show_de
                     forecasts_df["fuel_type"] = parts[1] if parts.shape[1] > 1 else pd.NA
                     derived_columns.append("fuel_type")
             st.success(f"Loaded {len(forecasts_df)} forecasts from pipeline")
+
+            # Calculate and display data freshness
+            if not forecasts_df.empty and "ds" in forecasts_df.columns:
+                earliest_forecast_ts = forecasts_df["ds"].min()
+                now_utc = pd.Timestamp.now(tz="UTC").floor("h")
+
+                # Forecasts start from last_data + 1h, so last_data = earliest_forecast - 1h
+                last_data_ts = earliest_forecast_ts - pd.Timedelta(hours=1)
+
+                # Ensure both timestamps are timezone-aware for comparison
+                if not hasattr(last_data_ts, 'tz') or last_data_ts.tz is None:
+                    last_data_ts = pd.Timestamp(last_data_ts, tz="UTC")
+
+                data_age_hours = (now_utc - last_data_ts).total_seconds() / 3600
+
+                # Show warning if data is > 6 hours old
+                if data_age_hours > 6:
+                    st.warning(
+                        f"⚠️ Forecasts are based on **{data_age_hours:.1f} hour old** data "
+                        f"(last EIA data: {last_data_ts.strftime('%b %d %H:%M')} UTC). "
+                        f"Click 'Refresh Forecasts' button in sidebar to update."
+                    )
+                else:
+                    st.info(
+                        f"✅ Forecasts from {last_data_ts.strftime('%b %d %H:%M')} UTC data "
+                        f"({data_age_hours:.1f}h old)"
+                    )
+
         except Exception as e:
             st.warning(f"Could not load parquet: {e}")
 
@@ -209,14 +241,20 @@ def render_forecasts_tab(db_path: str, regions: list, fuel_type: str, *, show_de
         "Select Series",
         options=series_options,
         index=0 if series_options else None,
+        key="forecast_series_select",
     )
 
     if selected_series:
         series_data = forecasts_df[forecasts_df["unique_id"] == selected_series].copy()
         series_data = series_data.sort_values("ds")
 
+        # Convert to local timezone for display
+        region_code = series_data["unique_id"].iloc[0].split("_")[0]
+        region_info = REGIONS.get(region_code)
+        timezone_name = region_info.timezone if region_info else "UTC"
+
         # Create forecast plot with intervals
-        fig = create_forecast_plot(series_data, selected_series)
+        fig = create_forecast_plot(series_data, selected_series, timezone_name)
         st.plotly_chart(fig, width="stretch")
 
         # Show data table
@@ -227,12 +265,29 @@ def render_forecasts_tab(db_path: str, regions: list, fuel_type: str, *, show_de
             )
 
 
-def create_forecast_plot(df: pd.DataFrame, title: str) -> go.Figure:
-    """Create Plotly figure with forecast and prediction intervals."""
+def create_forecast_plot(df: pd.DataFrame, title: str, timezone_name: str = "UTC") -> go.Figure:
+    """Create Plotly figure with forecast and prediction intervals.
+
+    Args:
+        df: Forecast dataframe with ds (timestamp), yhat, and interval columns
+        title: Series name for chart title
+        timezone_name: IANA timezone name for display (e.g., "America/Chicago")
+    """
     fig = go.Figure()
 
-    # Ensure datetime
+    # Convert timestamps to local timezone for display
+    df = df.copy()
     df["ds"] = pd.to_datetime(df["ds"])
+
+    # Convert UTC to local timezone
+    if timezone_name != "UTC":
+        df["ds"] = df["ds"].dt.tz_localize("UTC").dt.tz_convert(timezone_name)
+
+    # Get timezone abbreviation for display (e.g., "CST", "PST")
+    if timezone_name != "UTC" and len(df) > 0:
+        tz_abbr = df["ds"].iloc[0].strftime("%Z")
+    else:
+        tz_abbr = "UTC"
 
     # 95% interval (outer, lighter)
     if "yhat_lo_95" in df.columns and "yhat_hi_95" in df.columns:
@@ -279,7 +334,7 @@ def create_forecast_plot(df: pd.DataFrame, title: str) -> go.Figure:
 
     fig.update_layout(
         title=f"Forecast: {title}",
-        xaxis_title="Time",
+        xaxis_title=f"Time ({tz_abbr})",
         yaxis_title="Generation (MWh)",
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
@@ -506,6 +561,304 @@ def render_weather_tab(db_path: str, regions: list):
                 )
 
 
+def render_interpretability_tab(regions: list, fuel_type: str):
+    """Render model interpretability visualizations (SHAP, feature importance, PDP)."""
+    st.subheader("Model Interpretability")
+
+    # Model Leaderboard Section
+    st.markdown("### 🏆 Model Leaderboard (Cross-Validation)")
+
+    # Model descriptions for education
+    MODEL_INFO = {
+        "AutoARIMA": {
+            "type": "Statistical",
+            "description": "Auto-tuned ARIMA with automatic p,d,q selection. Good for univariate series with trend/seasonality.",
+            "strengths": "Robust, well-understood, good prediction intervals",
+        },
+        "MSTL_ARIMA": {
+            "type": "Statistical",
+            "description": "Multiple Seasonal-Trend decomposition + ARIMA. Handles daily (24h) and weekly (168h) seasonality.",
+            "strengths": "Best for multi-seasonal patterns like energy data",
+        },
+        "AutoETS": {
+            "type": "Statistical",
+            "description": "Exponential smoothing with automatic error/trend/season selection.",
+            "strengths": "Simple, fast, works well for smooth series",
+        },
+        "AutoTheta": {
+            "type": "Statistical",
+            "description": "Theta method with automatic decomposition. Robust to outliers.",
+            "strengths": "Competition winner (M3), handles level shifts",
+        },
+        "CES": {
+            "type": "Statistical",
+            "description": "Complex Exponential Smoothing. Captures complex seasonal patterns.",
+            "strengths": "Good for complex seasonality",
+        },
+        "SeasonalNaive": {
+            "type": "Baseline",
+            "description": "Uses value from same hour last week. Baseline benchmark.",
+            "strengths": "Simple benchmark - if beaten, models add value",
+        },
+    }
+
+    run_log_path = Path("data/renewable/run_log.json")
+    if run_log_path.exists():
+        try:
+            import json
+            run_log = json.loads(run_log_path.read_text())
+            pipeline_results = run_log.get("pipeline_results", {})
+            leaderboard_data = pipeline_results.get("leaderboard", [])
+
+            if leaderboard_data:
+                leaderboard_df = pd.DataFrame(leaderboard_data)
+                best_model = pipeline_results.get("best_model", "")
+                best_rmse = pipeline_results.get("best_rmse", 0)
+
+                # Key metrics row
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Best Model", best_model)
+                with col2:
+                    st.metric("Best RMSE", f"{best_rmse:.3f}")
+                with col3:
+                    st.metric("Models Evaluated", len(leaderboard_data))
+                with col4:
+                    # Calculate improvement over baseline
+                    baseline_rmse = leaderboard_df[leaderboard_df["model"] == "SeasonalNaive"]["rmse"].values
+                    if len(baseline_rmse) > 0 and best_rmse > 0:
+                        improvement = ((baseline_rmse[0] - best_rmse) / baseline_rmse[0]) * 100
+                        st.metric("vs Baseline", f"{improvement:+.1f}%", help="Improvement over SeasonalNaive")
+                    else:
+                        st.metric("vs Baseline", "N/A")
+
+                # Selection rationale
+                st.markdown("#### Why This Model?")
+                st.info(f"""
+                **{best_model}** was selected because it has the **lowest RMSE** on cross-validation.
+
+                - **RMSE (Root Mean Square Error)**: Penalizes large errors more heavily. Best for energy forecasting where big misses are costly.
+                - **Selection method**: Time-series CV with {run_log.get('config', {}).get('cv_windows', 2)} windows, step size {run_log.get('config', {}).get('cv_step_size', 168)}h
+                - **Horizon**: {run_log.get('config', {}).get('horizon', 24)}h ahead forecasts
+                """)
+
+                # Model description for winner
+                if best_model in MODEL_INFO:
+                    info = MODEL_INFO[best_model]
+                    st.success(f"**{info['type']} Model**: {info['description']}")
+
+                # Full leaderboard with visualization
+                st.markdown("#### All Models Ranked by RMSE")
+
+                display_cols = [c for c in ["model", "rmse", "mae", "mape", "coverage_80", "coverage_95"]
+                               if c in leaderboard_df.columns]
+
+                # Create visualization
+                if "rmse" in leaderboard_df.columns:
+                    fig = px.bar(
+                        leaderboard_df.sort_values("rmse"),
+                        x="model",
+                        y="rmse",
+                        title="Model Comparison (Lower RMSE = Better)",
+                        color="rmse",
+                        color_continuous_scale="RdYlGn_r",
+                    )
+                    fig.add_hline(y=best_rmse, line_dash="dash", line_color="green",
+                                  annotation_text=f"Best: {best_rmse:.3f}")
+                    fig.update_layout(height=350)
+                    st.plotly_chart(fig, width="stretch")
+
+                # Format numeric columns for table
+                styled_df = leaderboard_df[display_cols].copy()
+                for col in ["rmse", "mae", "mape"]:
+                    if col in styled_df.columns:
+                        styled_df[col] = styled_df[col].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "N/A")
+                for col in ["coverage_80", "coverage_95"]:
+                    if col in styled_df.columns:
+                        styled_df[col] = styled_df[col].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
+
+                st.dataframe(styled_df, width="stretch", hide_index=True)
+
+                # Coverage analysis
+                if "coverage_80" in leaderboard_df.columns:
+                    st.markdown("#### Prediction Interval Coverage")
+                    st.markdown("""
+                    **Coverage** measures if prediction intervals are well-calibrated:
+                    - **80% interval** should contain ~80% of actual values
+                    - **95% interval** should contain ~95% of actual values
+                    - **Under-coverage** (<target) = intervals too narrow, overconfident
+                    - **Over-coverage** (>target) = intervals too wide, conservative
+                    """)
+
+                    coverage_df = leaderboard_df[["model", "coverage_80", "coverage_95"]].copy()
+                    coverage_df["coverage_80_status"] = coverage_df["coverage_80"].apply(
+                        lambda x: "Under" if x < 75 else ("Over" if x > 85 else "Good") if pd.notna(x) else "N/A"
+                    )
+                    coverage_df["coverage_95_status"] = coverage_df["coverage_95"].apply(
+                        lambda x: "Under" if x < 90 else ("Over" if x > 99 else "Good") if pd.notna(x) else "N/A"
+                    )
+
+                # Model descriptions expander
+                with st.expander("Model Descriptions"):
+                    for model_name, info in MODEL_INFO.items():
+                        st.markdown(f"**{model_name}** ({info['type']})")
+                        st.markdown(f"- {info['description']}")
+                        st.markdown(f"- *Strengths*: {info['strengths']}")
+                        st.markdown("---")
+
+                # CV configuration expander
+                config = run_log.get("config", {})
+                with st.expander("CV Configuration"):
+                    st.write({
+                        "cv_windows": config.get("cv_windows"),
+                        "cv_step_size": config.get("cv_step_size"),
+                        "horizon": config.get("horizon"),
+                        "regions": config.get("regions"),
+                        "fuel_types": config.get("fuel_types"),
+                        "run_at": run_log.get("run_at_utc", "N/A"),
+                    })
+            else:
+                st.info("Leaderboard not available. Run the pipeline with the latest code to generate.")
+        except Exception as e:
+            st.warning(f"Could not load leaderboard: {e}")
+    else:
+        st.info("No run log found. Run the pipeline to generate model comparison.")
+
+    st.divider()
+
+    st.markdown("### 🔍 Per-Series Interpretability")
+    st.markdown("""
+    **LightGBM** models are trained alongside statistical models (MSTL/ARIMA) to provide
+    interpretability insights. The statistical models generate the primary forecasts,
+    while LightGBM helps understand feature importance and relationships.
+    """)
+
+    interp_dir = Path("data/renewable/interpretability")
+
+    if not interp_dir.exists():
+        st.info("No interpretability data available. Run the pipeline to generate SHAP and PDP plots.")
+        return
+
+    # Get available series
+    series_dirs = sorted([d.name for d in interp_dir.iterdir() if d.is_dir()])
+
+    if not series_dirs:
+        st.warning("Interpretability directory exists but contains no series data.")
+        return
+
+    # Filter by selected regions and fuel type
+    filtered_series = []
+    for series_id in series_dirs:
+        parts = series_id.split("_")
+        if len(parts) == 2:
+            region, ft = parts
+            if regions and region not in regions:
+                continue
+            if fuel_type != "Both" and ft != fuel_type:
+                continue
+            filtered_series.append(series_id)
+
+    if not filtered_series:
+        st.warning("No interpretability data for selected filters.")
+        return
+
+    # Series selector
+    selected_series = st.selectbox(
+        "Select Series",
+        options=filtered_series,
+        index=0,
+        key="interpretability_series_select",
+    )
+
+    if not selected_series:
+        return
+
+    series_dir = interp_dir / selected_series
+
+    # Layout: Feature Importance + SHAP Summary side by side
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### Feature Importance")
+        importance_path = series_dir / "feature_importance.csv"
+        if importance_path.exists():
+            try:
+                importance_df = pd.read_csv(importance_path)
+                # Show top 15 features
+                top_features = importance_df.head(15)
+
+                # Create bar chart
+                fig = px.bar(
+                    top_features,
+                    x="importance",
+                    y="feature",
+                    orientation="h",
+                    title=f"Top Features: {selected_series}",
+                    labels={"importance": "Importance", "feature": "Feature"},
+                )
+                fig.update_layout(yaxis=dict(autorange="reversed"), height=400)
+                st.plotly_chart(fig, width="stretch")
+
+                with st.expander("Full Feature List"):
+                    st.dataframe(importance_df, width="stretch")
+            except Exception as e:
+                st.error(f"Error loading feature importance: {e}")
+        else:
+            st.info("Feature importance not available.")
+
+    with col2:
+        st.markdown("### SHAP Summary")
+        shap_summary_path = series_dir / "shap_summary.png"
+        if shap_summary_path.exists():
+            st.image(str(shap_summary_path), width="stretch")
+        else:
+            # Try bar plot as fallback
+            shap_bar_path = series_dir / "shap_bar.png"
+            if shap_bar_path.exists():
+                st.image(str(shap_bar_path), width="stretch")
+            else:
+                st.info("SHAP summary not available.")
+
+    st.divider()
+
+    # SHAP Dependence Plots
+    st.markdown("### SHAP Dependence Plots")
+    st.markdown("Shows how individual feature values affect predictions.")
+
+    shap_dep_files = list(series_dir.glob("shap_dependence_*.png"))
+    if shap_dep_files:
+        # Create columns for dependence plots
+        n_cols = min(3, len(shap_dep_files))
+        cols = st.columns(n_cols)
+
+        for i, dep_file in enumerate(shap_dep_files[:6]):  # Limit to 6 plots
+            feature_name = dep_file.stem.replace("shap_dependence_", "")
+            with cols[i % n_cols]:
+                st.markdown(f"**{feature_name}**")
+                st.image(str(dep_file), width="stretch")
+    else:
+        st.info("SHAP dependence plots not available.")
+
+    st.divider()
+
+    # Partial Dependence Plot
+    st.markdown("### Partial Dependence Plot")
+    st.markdown("Shows the average effect of features on predictions (marginal effect).")
+
+    pdp_path = series_dir / "partial_dependence.png"
+    if pdp_path.exists():
+        st.image(str(pdp_path), width="stretch")
+    else:
+        st.info("Partial dependence plot not available.")
+
+    # Waterfall plot for sample prediction
+    waterfall_path = series_dir / "shap_waterfall_sample.png"
+    if waterfall_path.exists():
+        st.markdown("### Sample Prediction Explanation")
+        st.markdown("SHAP waterfall showing how features contributed to a single prediction.")
+        st.image(str(waterfall_path), width="stretch")
+
+
 def generate_demo_forecasts(regions: list, fuel_type: str) -> pd.DataFrame:
     """Generate demo forecast data for display."""
     data = []
@@ -547,14 +900,26 @@ def generate_demo_forecasts(regions: list, fuel_type: str) -> pd.DataFrame:
 
 def run_pipeline_from_dashboard(db_path: str, regions: list, fuel_type: str):
     """Run the forecasting pipeline from the dashboard."""
-    st.info("Running pipeline... (This would trigger the actual pipeline)")
+    with st.spinner("Refreshing forecasts... (may take 2-3 minutes)"):
+        try:
+            from src.renewable.jobs import run_hourly
 
-    # In production, this would call:
-    # from src.renewable.tasks import run_full_pipeline, RenewablePipelineConfig
-    # config = RenewablePipelineConfig(regions=regions, fuel_types=[fuel_type])
-    # results = run_full_pipeline(config)
+            # Run the hourly pipeline job
+            run_hourly.main()
 
-    st.success("Pipeline completed!")
+            st.success("Pipeline completed! Forecasts have been updated with latest EIA data.")
+            st.info("Reloading page to show new forecasts...")
+
+            # Wait a moment then reload
+            import time
+            time.sleep(2)
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"Pipeline failed: {e}")
+            import traceback
+            with st.expander("Error details"):
+                st.code(traceback.format_exc())
 
 
 if __name__ == "__main__":

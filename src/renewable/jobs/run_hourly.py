@@ -1,3 +1,4 @@
+# file: src/renewable/jobs/run_hourly.py
 """Hourly renewable pipeline entry point with validation."""
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from dotenv import load_dotenv
 
 from src.renewable.tasks import RenewablePipelineConfig, run_full_pipeline
 from src.renewable.validation import validate_generation_df
+from src.renewable.data_freshness import check_all_series_freshness, FreshnessCheckResult
 
 load_dotenv()
 
@@ -122,18 +124,87 @@ def run_hourly_pipeline() -> dict:
     regions = _env_list("RENEWABLE_REGIONS", "CALI,ERCO,MISO")
     fuel_types = _env_list("RENEWABLE_FUELS", "WND,SUN")
     lookback_days = _env_int("LOOKBACK_DAYS", 30)
-    horizon = _env_int("RENEWABLE_HORIZON", 24)
+
+    # Horizon configuration: support both preset and direct override
+    horizon_preset = os.getenv("RENEWABLE_HORIZON_PRESET", None)  # "24h" | "48h" | "72h"
+    horizon_override = _env_int("RENEWABLE_HORIZON", 0)  # Legacy direct override
+
+    # If direct override is set, use it; otherwise use preset (or None for default)
+    if horizon_override > 0:
+        horizon = horizon_override
+        horizon_preset = None  # Ignore preset if direct override is set
+    else:
+        horizon = 24  # Default, may be overridden by preset
+
     cv_windows = _env_int("RENEWABLE_CV_WINDOWS", 2)
     cv_step_size = _env_int("RENEWABLE_CV_STEP_SIZE", 168)
 
     start_date = os.getenv("RENEWABLE_START_DATE", "")
     end_date = os.getenv("RENEWABLE_END_DATE", "")
 
+    # Check if we should force run (e.g., manual dispatch)
+    force_run = os.getenv("FORCE_RUN", "false").lower() == "true"
+
+    # Data freshness check - skip full pipeline if no new data
+    if not force_run:
+        api_key = os.getenv("EIA_API_KEY", "")
+        if not api_key:
+            print("WARNING: EIA_API_KEY not set, skipping freshness check")
+        else:
+            run_log_path = Path(data_dir) / "run_log.json"
+            freshness = check_all_series_freshness(
+                regions=regions,
+                fuel_types=fuel_types,
+                run_log_path=run_log_path,
+                api_key=api_key,
+            )
+
+            if not freshness.has_new_data:
+                # No new data - return early with skip status
+                skip_log = {
+                    "run_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "status": "skipped",
+                    "reason": "no_new_data",
+                    "freshness_check": {
+                        "checked_at_utc": freshness.checked_at_utc,
+                        "summary": freshness.summary,
+                        "series_status": freshness.series_status,
+                    },
+                    "config": {
+                        "regions": regions,
+                        "fuel_types": fuel_types,
+                        "data_dir": data_dir,
+                    },
+                }
+
+                # Write skip log (append to run_log.json)
+                Path(data_dir).mkdir(parents=True, exist_ok=True)
+                skip_log_path = Path(data_dir) / "skip_log.json"
+                skip_log_path.write_text(
+                    json.dumps(skip_log, indent=2, default=_json_default)
+                )
+
+                print(f"SKIPPED: {freshness.summary}")
+                print(f"Skip log written to: {skip_log_path}")
+
+                # Set output for GitHub Actions
+                github_output = os.getenv("GITHUB_OUTPUT")
+                if github_output:
+                    with open(github_output, "a") as f:
+                        f.write("status=skipped\n")
+
+                return skip_log
+
+            print(f"Freshness check: {freshness.summary}")
+    else:
+        print("FORCE_RUN=true - skipping freshness check")
+
     cfg = RenewablePipelineConfig(
         regions=regions,
         fuel_types=fuel_types,
         lookback_days=lookback_days,
         horizon=horizon,
+        horizon_preset=horizon_preset,  # Apply preset if specified
         data_dir=data_dir,
         overwrite=True,
         start_date=start_date,
@@ -244,6 +315,12 @@ def run_hourly_pipeline() -> dict:
             f"QUALITY_GATE_FAILED: neg_forecast | "
             f"ratio={neg_forecast_ratio:.1%} max={max_neg_forecast_ratio:.0%}"
         )
+
+    # Set output for GitHub Actions (successful run)
+    github_output = os.getenv("GITHUB_OUTPUT")
+    if github_output:
+        with open(github_output, "a") as f:
+            f.write("status=success\n")
 
     return run_log
 

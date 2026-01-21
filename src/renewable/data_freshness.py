@@ -1,0 +1,280 @@
+# src/renewable/data_freshness.py
+"""
+Lightweight EIA data freshness checking.
+
+This module provides functions to check if new data is available from the EIA API
+before running the full pipeline. It compares the current max timestamps with
+the previous run's max timestamps to determine if a full pipeline run is needed.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+import pandas as pd
+import requests
+
+from src.renewable.regions import get_eia_respondent
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class FreshnessCheckResult:
+    """Result of a data freshness check."""
+
+    has_new_data: bool
+    checked_at_utc: str
+    series_status: dict[str, dict] = field(default_factory=dict)
+    summary: str = ""
+
+
+def load_previous_max_ds(run_log_path: Path) -> dict[str, str]:
+    """
+    Load per-series max_ds from previous run_log.json.
+
+    Args:
+        run_log_path: Path to run_log.json
+
+    Returns:
+        Dict mapping unique_id -> max_ds ISO string.
+        Empty dict if file doesn't exist or is malformed.
+    """
+    if not run_log_path.exists():
+        logger.info("[freshness] No previous run_log.json found - first run")
+        return {}
+
+    try:
+        data = json.loads(run_log_path.read_text(encoding="utf-8"))
+
+        # Navigate to diagnostics.generation_coverage.coverage
+        coverage = (
+            data.get("diagnostics", {})
+            .get("generation_coverage", {})
+            .get("coverage", [])
+        )
+
+        if not coverage:
+            logger.warning("[freshness] run_log.json has no coverage data")
+            return {}
+
+        result = {}
+        for item in coverage:
+            uid = item.get("unique_id")
+            max_ds = item.get("max_ds")
+            if uid and max_ds:
+                result[uid] = max_ds
+
+        logger.info(f"[freshness] Loaded {len(result)} series from previous run_log")
+        return result
+
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        logger.warning(f"[freshness] Failed to parse run_log.json: {e}")
+        return {}
+
+
+def probe_eia_latest(
+    api_key: str,
+    region: str,
+    fuel_type: str,
+    *,
+    timeout: int = 15,
+) -> Optional[str]:
+    """
+    Fetch only the single most recent record from EIA API.
+
+    This is a lightweight probe that uses:
+    - length=1 (only fetch 1 record)
+    - sort by period DESC (most recent first)
+
+    Args:
+        api_key: EIA API key
+        region: Region code (CALI, ERCO, MISO, etc.)
+        fuel_type: Fuel type (WND, SUN)
+        timeout: Request timeout in seconds
+
+    Returns:
+        ISO timestamp string of latest record, or None on error.
+    """
+    try:
+        respondent = get_eia_respondent(region)
+
+        params = {
+            "api_key": api_key,
+            "data[]": "value",
+            "facets[respondent][]": respondent,
+            "facets[fueltype][]": fuel_type,
+            "frequency": "hourly",
+            "length": 1,
+            "sort[0][column]": "period",
+            "sort[0][direction]": "desc",
+        }
+
+        base_url = "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/"
+        resp = requests.get(base_url, params=params, timeout=timeout)
+        resp.raise_for_status()
+
+        payload = resp.json()
+        response = payload.get("response", {})
+        records = response.get("data", [])
+
+        if not records:
+            logger.warning(f"[probe] {region}_{fuel_type}: No records returned")
+            return None
+
+        period = records[0].get("period")
+        if not period:
+            logger.warning(f"[probe] {region}_{fuel_type}: Record missing 'period'")
+            return None
+
+        # Parse to consistent ISO format
+        ts = pd.to_datetime(period, utc=True)
+        return ts.isoformat()
+
+    except requests.RequestException as e:
+        logger.warning(f"[probe] {region}_{fuel_type}: API error: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"[probe] {region}_{fuel_type}: Unexpected error: {e}")
+        return None
+
+
+def _compare_timestamps(prev: Optional[str], current: Optional[str]) -> bool:
+    """
+    Return True if current is strictly newer than prev.
+
+    Handles None values conservatively (assume new data if unknown).
+    """
+    if not prev or not current:
+        return True  # Unknown = assume new data (conservative)
+
+    try:
+        prev_dt = pd.to_datetime(prev, utc=True)
+        curr_dt = pd.to_datetime(current, utc=True)
+        return curr_dt > prev_dt
+    except Exception:
+        return True  # Parse error = assume new data
+
+
+def check_all_series_freshness(
+    regions: list[str],
+    fuel_types: list[str],
+    run_log_path: Path,
+    api_key: str,
+) -> FreshnessCheckResult:
+    """
+    Check all series for new data availability.
+
+    Args:
+        regions: List of region codes (e.g., ["CALI", "ERCO", "MISO"])
+        fuel_types: List of fuel types (e.g., ["WND", "SUN"])
+        run_log_path: Path to previous run_log.json
+        api_key: EIA API key
+
+    Returns:
+        FreshnessCheckResult with has_new_data flag and detailed status per series.
+    """
+    checked_at = datetime.now(timezone.utc).isoformat()
+
+    # 1. Load previous max_ds values
+    prev_max_ds = load_previous_max_ds(run_log_path)
+
+    # 2. If no previous run_log, always run full pipeline (first run)
+    if not prev_max_ds:
+        return FreshnessCheckResult(
+            has_new_data=True,
+            checked_at_utc=checked_at,
+            series_status={},
+            summary="No previous run_log.json found - running full pipeline (first run)",
+        )
+
+    # 3. Probe each series
+    series_status: dict[str, dict] = {}
+    has_any_new = False
+    new_series: list[str] = []
+    error_series: list[str] = []
+
+    for region in regions:
+        for fuel_type in fuel_types:
+            series_id = f"{region}_{fuel_type}"
+            prev = prev_max_ds.get(series_id)
+            current = probe_eia_latest(api_key, region, fuel_type)
+
+            # Determine if this series has new data
+            if current is None:
+                # API error - be conservative, assume new data
+                is_new = True
+                error_series.append(series_id)
+                logger.warning(
+                    f"[freshness] {series_id}: probe failed, assuming new data"
+                )
+            else:
+                is_new = _compare_timestamps(prev, current)
+
+            series_status[series_id] = {
+                "prev_max_ds": prev,
+                "current_max_ds": current,
+                "is_new": is_new,
+            }
+
+            if is_new:
+                has_any_new = True
+                if current is not None:
+                    new_series.append(series_id)
+
+            # Log each series check
+            status_str = "NEW" if is_new else "unchanged"
+            logger.info(
+                f"[freshness] {series_id}: prev={prev} current={current} ({status_str})"
+            )
+
+    # 4. Build summary
+    if error_series:
+        summary = f"Probe errors for {error_series}, assuming new data available"
+    elif new_series:
+        summary = f"New data found for: {', '.join(new_series)}"
+    else:
+        summary = "No new data found for any series"
+
+    return FreshnessCheckResult(
+        has_new_data=has_any_new,
+        checked_at_utc=checked_at,
+        series_status=series_status,
+        summary=summary,
+    )
+
+
+if __name__ == "__main__":
+    # Quick test
+    import os
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    logging.basicConfig(level=logging.INFO)
+
+    api_key = os.getenv("EIA_API_KEY")
+    if not api_key:
+        print("EIA_API_KEY not set")
+        exit(1)
+
+    run_log_path = Path("data/renewable/run_log.json")
+
+    result = check_all_series_freshness(
+        regions=["CALI", "ERCO", "MISO"],
+        fuel_types=["WND", "SUN"],
+        run_log_path=run_log_path,
+        api_key=api_key,
+    )
+
+    print(f"\nFreshness Check Result:")
+    print(f"  has_new_data: {result.has_new_data}")
+    print(f"  checked_at: {result.checked_at_utc}")
+    print(f"  summary: {result.summary}")
+    print(f"\nPer-series status:")
+    for series_id, status in result.series_status.items():
+        print(f"  {series_id}: {status}")

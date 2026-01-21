@@ -1,0 +1,26 @@
+{
+  "seasonality": {
+    "series_analyzed": 3,
+    "hourly_patterns": "Clear 24h and 168h cycles detected",
+    "recommendation": "Use MSTL with season_length=[24, 168]"
+  },
+  "zero_inflation": {
+    "solar_zero_ratio": "33.38%",
+    "finding": "Solar has substantial zeros at night (expected)",
+    "recommendation": "Use RMSE/MAE as primary metrics (avoid MAPE)"
+  },
+  "coverage": {
+    "series_complete": "6/6",
+    "threshold": ">=98% coverage",
+    "recommendation": "Use drop_incomplete_series policy"
+  },
+  "negative_values": {
+    "count": 0,
+    "ratio": "0.0000%",
+    "recommendation": "clamp"
+  },
+  "weather_alignment": {
+    "merge_success_rate": "100.0%",
+    "recommendation": "Include all 7 weather variables"
+  }
+}

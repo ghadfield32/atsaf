@@ -1,4 +1,38 @@
 # file: src/renewable/modeling.py
+"""
+Renewable Energy Forecasting Models
+
+This module provides two model paths for renewable energy forecasting:
+
+## 1. Core Path (Primary Forecasting): RenewableForecastModel
+   - **Purpose:** Production forecasts with calibrated prediction intervals
+   - **Framework:** StatsForecast (native multi-series support)
+   - **Models:** MSTL_ARIMA, AutoARIMA, AutoETS, SeasonalNaive
+   - **Usage:** Always runs in pipeline (train_renewable_models)
+   - **Why StatsForecast:**
+     * 10x faster than individual model training
+     * Built-in prediction intervals (no conformal prediction needed)
+     * Excellent with seasonal patterns (MSTL handles daily + weekly cycles)
+   - **Output:** Best model selected via CV, forecasts with 80%/95% intervals
+
+## 2. Interpretability Path (Feature Analysis): RenewableLGBMForecaster
+   - **Purpose:** Understanding feature contributions via SHAP analysis
+   - **Framework:** skforecast + LightGBM
+   - **Models:** LightGBM with weather + time features
+   - **Usage:** Always runs by default (failures non-fatal)
+   - **Output:** SHAP plots, feature importance, partial dependence plots
+   - **Note:** NOT used for final forecasts (StatsForecast provides those)
+
+## Model Selection Philosophy
+- **StatsForecast:** Use for operational forecasts (speed + intervals)
+- **LightGBM:** Use for understanding (interpretability)
+- **Cross-validation:** Determines best StatsForecast model automatically
+
+## Removed Models
+- **RenewableMLForecast:** Removed as unused (MLForecast + conformal prediction)
+  Use RenewableForecastModel (StatsForecast) for forecasting
+  Use RenewableLGBMForecaster (skforecast) for interpretability
+"""
 
 from __future__ import annotations
 
@@ -405,6 +439,15 @@ class RenewableForecastModel:
         self.fitted = False
 
     def prepare_training_df(self, df: pd.DataFrame, weather_df: Optional[pd.DataFrame]) -> pd.DataFrame:
+        """
+        Prepare training dataframe for modeling.
+
+        NOTE: This function now supports BOTH:
+        1. Raw data (from old pipeline): performs all preprocessing
+        2. Preprocessed data (from dataset_builder): skips preprocessing
+
+        Detection: If df has time features (hour_sin, hour_cos, etc.), assumes already preprocessed.
+        """
         req = {"unique_id", "ds", "y"}
         if not req.issubset(df.columns):
             raise ValueError(f"generation df missing cols={sorted(req - set(df.columns))}")
@@ -418,6 +461,33 @@ class RenewableForecastModel:
         work = df.copy()
         work["ds"] = pd.to_datetime(work["ds"], errors="raise")
         work = work.sort_values(["unique_id", "ds"]).reset_index(drop=True)
+
+        # Check if data is already preprocessed (has time features)
+        time_features = ["hour_sin", "hour_cos", "dow_sin", "dow_cos"]
+        is_preprocessed = all(col in work.columns for col in time_features)
+
+        if is_preprocessed:
+            # Data already preprocessed by dataset_builder, skip preprocessing
+            print("[prepare_training_df] Detected preprocessed data (has time features), skipping preprocessing")
+
+            # Validate y has no nulls
+            y_null = work["y"].isna()
+            if y_null.any():
+                sample = work.loc[y_null, ["unique_id", "ds", "y"]].head(25)
+                raise RuntimeError(
+                    f"[generation][Y] Found null y values. rows={int(y_null.sum())}. "
+                    f"Sample:\n{sample.to_string(index=False)}"
+                )
+
+            # Identify exog columns (time features + any weather vars present)
+            wcols = [c for c in WEATHER_VARS if c in work.columns]
+            self._exog_cols = time_features + wcols
+
+            print(f"[prepare_training_df] Using {len(self._exog_cols)} exog features: {self._exog_cols[:5]}...")
+            return work
+
+        # Legacy path: raw data, perform all preprocessing
+        print("[prepare_training_df] Processing raw data (legacy path)")
 
         y_null = work["y"].isna()
         if y_null.any():
@@ -857,208 +927,6 @@ class RenewableLGBMForecaster:
     def exog_features(self) -> list[str]:
         """Return list of exogenous feature names used in training."""
         return self._exog_features.copy()
-
-
-class RenewableMLForecast:
-    """
-    MLForecast-based forecaster with LightGBM and conformal prediction intervals.
-
-    This forecaster uses MLForecast for multi-series forecasting with tree-based
-    models (LightGBM), which can capture nonlinear weather→generation relationships
-    better than linear statistical models.
-
-    Key features:
-    - Native support for multiple series in long format
-    - Automatic lag and date features
-    - Conformal prediction intervals for calibrated uncertainty
-    - Fast training suitable for hourly retraining
-
-    Use alongside StatsForecast models and let CV decide the best model.
-    """
-
-    def __init__(
-        self,
-        horizon: int = 24,
-        lags: list[int] | None = None,
-        date_features: list[str] | None = None,
-        confidence_levels: tuple[int, int] = (80, 95),
-    ):
-        """
-        Initialize the MLForecast forecaster.
-
-        Args:
-            horizon: Forecast horizon in hours
-            lags: Lag features to use (default: [1, 2, 3, 6, 12, 24, 48, 168])
-            date_features: Date features to extract (default: hour, dayofweek)
-            confidence_levels: Confidence levels for prediction intervals
-        """
-        self.horizon = horizon
-        self.lags = lags or [1, 2, 3, 6, 12, 24, 48, 168]
-        self.date_features = date_features or ['hour', 'dayofweek']
-        self.confidence_levels = confidence_levels
-        self.mlf = None
-        self._exog_cols: list[str] = []
-        self.fitted = False
-
-    def fit(
-        self,
-        df: pd.DataFrame,
-        static_features: Optional[list[str]] = None,
-    ) -> None:
-        """
-        Fit MLForecast model on multi-series data.
-
-        Args:
-            df: DataFrame with columns [unique_id, ds, y] + optional exog features
-            static_features: List of static feature column names (per-series)
-        """
-        try:
-            from mlforecast import MLForecast
-            from mlforecast.target_transforms import Differences
-            from lightgbm import LGBMRegressor
-        except ImportError as e:
-            raise ImportError(
-                "MLForecast requires: mlforecast, lightgbm. "
-                f"Install with: pip install mlforecast lightgbm. Error: {e}"
-            )
-
-        # Identify exogenous columns (not unique_id, ds, y)
-        core_cols = {'unique_id', 'ds', 'y'}
-        self._exog_cols = [c for c in df.columns if c not in core_cols]
-
-        # Create MLForecast instance with LightGBM
-        self.mlf = MLForecast(
-            models={
-                'LGBMRegressor': LGBMRegressor(
-                    random_state=42,
-                    verbose=-1,
-                    n_estimators=100,
-                    learning_rate=0.1,
-                    max_depth=6,
-                    num_leaves=31,
-                    min_child_samples=20,
-                ),
-            },
-            freq='h',
-            lags=self.lags,
-            date_features=self.date_features,
-            target_transforms=[Differences([24])],  # Remove daily seasonality
-        )
-
-        # Fit the model - specify empty static_features if exog columns exist
-        # (all weather features are dynamic/time-varying)
-        if static_features is None and self._exog_cols:
-            static_features = []  # All features are dynamic
-        self.mlf.fit(df, static_features=static_features)
-        self.fitted = True
-
-        print(f"[MLForecast.fit] fitted with lags={self.lags}, exog={self._exog_cols}")
-
-    def predict(
-        self,
-        h: int,
-        X_df: Optional[pd.DataFrame] = None,
-    ) -> pd.DataFrame:
-        """
-        Generate point predictions.
-
-        Args:
-            h: Forecast horizon
-            X_df: Future exogenous features DataFrame
-
-        Returns:
-            DataFrame with predictions
-        """
-        if not self.fitted or self.mlf is None:
-            raise RuntimeError("Must call fit() before predict()")
-
-        return self.mlf.predict(h=h, X_df=X_df)
-
-    def predict_with_intervals(
-        self,
-        h: int,
-        X_df: Optional[pd.DataFrame] = None,
-        n_windows: int = 3,
-    ) -> pd.DataFrame:
-        """
-        Generate predictions with conformal prediction intervals.
-
-        Uses conformal prediction to generate calibrated intervals based on
-        cross-validation residuals.
-
-        Args:
-            h: Forecast horizon
-            X_df: Future exogenous features DataFrame
-            n_windows: Number of CV windows for conformal calibration
-
-        Returns:
-            DataFrame with columns: unique_id, ds, LGBMRegressor,
-            LGBMRegressor-lo-{level}, LGBMRegressor-hi-{level}
-        """
-        if not self.fitted or self.mlf is None:
-            raise RuntimeError("Must call fit() before predict_with_intervals()")
-
-        try:
-            from mlforecast.utils import PredictionIntervals
-        except ImportError:
-            # Fallback: return point predictions without intervals
-            print("[MLForecast] PredictionIntervals not available, returning point forecast")
-            return self.predict(h=h, X_df=X_df)
-
-        # Generate predictions with conformal intervals
-        levels = list(self.confidence_levels)
-        predictions = self.mlf.predict(
-            h=h,
-            X_df=X_df,
-            level=levels,
-            prediction_intervals=PredictionIntervals(n_windows=n_windows, h=h),
-        )
-
-        return predictions
-
-    def cross_validate(
-        self,
-        df: pd.DataFrame,
-        n_windows: int = 3,
-        step_size: int = 168,
-    ) -> pd.DataFrame:
-        """
-        Perform cross-validation.
-
-        Args:
-            df: Training DataFrame
-            n_windows: Number of CV windows
-            step_size: Step size between windows
-
-        Returns:
-            DataFrame with CV results
-        """
-        if not self.fitted or self.mlf is None:
-            raise RuntimeError("Must call fit() before cross_validate()")
-
-        cv_results = self.mlf.cross_validation(
-            df=df,
-            h=self.horizon,
-            n_windows=n_windows,
-            step_size=step_size,
-        )
-
-        return cv_results
-
-    @property
-    def feature_importance(self) -> pd.DataFrame:
-        """Get feature importance from the LightGBM model."""
-        if not self.fitted or self.mlf is None:
-            raise RuntimeError("Must call fit() before accessing feature_importance")
-
-        model = self.mlf.models_['LGBMRegressor']
-        importance = model.feature_importances_
-        features = self.mlf.ts.features_order_
-
-        return pd.DataFrame({
-            'feature': features,
-            'importance': importance,
-        }).sort_values('importance', ascending=False).reset_index(drop=True)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,106 @@
+{
+  "series_processed": 6,
+  "rows_input": 4214,
+  "rows_output": 4214,
+  "negative_values_found": {},
+  "negative_values_action": "passed",
+  "series_dropped_incomplete": [],
+  "missing_hour_summary": {
+    "series_count": 6,
+    "series_with_missing": 0,
+    "total_missing_hours": 0,
+    "worst_missing_ratio": 0.0,
+    "policy": "drop_incomplete_series",
+    "series_dropped": [],
+    "missing_hour_blocks": [
+      {
+        "unique_id": "CALI_SUN",
+        "start": "2025-12-22 00:00:00",
+        "end": "2026-01-20 07:00:00",
+        "expected_hours": 704,
+        "actual_hours": 704,
+        "missing_hours": 0,
+        "missing_ratio": 0.0,
+        "n_missing_blocks": 0,
+        "largest_missing_block_hours": 0
+      },
+      {
+        "unique_id": "CALI_WND",
+        "start": "2025-12-22 00:00:00",
+        "end": "2026-01-20 07:00:00",
+        "expected_hours": 704,
+        "actual_hours": 704,
+        "missing_hours": 0,
+        "missing_ratio": 0.0,
+        "n_missing_blocks": 0,
+        "largest_missing_block_hours": 0
+      },
+      {
+        "unique_id": "ERCO_SUN",
+        "start": "2025-12-22 00:00:00",
+        "end": "2026-01-20 05:00:00",
+        "expected_hours": 702,
+        "actual_hours": 702,
+        "missing_hours": 0,
+        "missing_ratio": 0.0,
+        "n_missing_blocks": 0,
+        "largest_missing_block_hours": 0
+      },
+      {
+        "unique_id": "ERCO_WND",
+        "start": "2025-12-22 00:00:00",
+        "end": "2026-01-20 05:00:00",
+        "expected_hours": 702,
+        "actual_hours": 702,
+        "missing_hours": 0,
+        "missing_ratio": 0.0,
+        "n_missing_blocks": 0,
+        "largest_missing_block_hours": 0
+      },
+      {
+        "unique_id": "MISO_SUN",
+        "start": "2025-12-22 00:00:00",
+        "end": "2026-01-20 04:00:00",
+        "expected_hours": 701,
+        "actual_hours": 701,
+        "missing_hours": 0,
+        "missing_ratio": 0.0,
+        "n_missing_blocks": 0,
+        "largest_missing_block_hours": 0
+      },
+      {
+        "unique_id": "MISO_WND",
+        "start": "2025-12-22 00:00:00",
+        "end": "2026-01-20 04:00:00",
+        "expected_hours": 701,
+        "actual_hours": 701,
+        "missing_hours": 0,
+        "missing_ratio": 0.0,
+        "n_missing_blocks": 0,
+        "largest_missing_block_hours": 0
+      }
+    ]
+  },
+  "weather_coverage_by_region": {
+    "CALI": 1.0,
+    "ERCO": 1.0,
+    "MISO": 1.0
+  },
+  "weather_alignment_failures": [],
+  "time_features_added": [
+    "hour_sin",
+    "hour_cos",
+    "dow_sin",
+    "dow_cos"
+  ],
+  "weather_features_added": [
+    "temperature_2m",
+    "wind_speed_10m",
+    "wind_speed_100m",
+    "wind_direction_10m",
+    "direct_radiation",
+    "diffuse_radiation",
+    "cloud_cover"
+  ],
+  "timestamp": "2026-01-21T17:37:07.080932"
+}

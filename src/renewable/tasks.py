@@ -34,6 +34,7 @@ from src.renewable.model_interpretability import (
 )
 from src.renewable.open_meteo import OpenMeteoRenewable
 from src.renewable.regions import REGIONS, list_regions
+from src.renewable.dataset_builder import build_modeling_dataset, PreprocessingReport
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,13 @@ class RenewablePipelineConfig:
     # CV parameters
     cv_windows: int = 5
     cv_step_size: int = 168  # 1 week
+
+    # Model parameters
+    enable_interpretability: bool = True  # LightGBM SHAP analysis (on by default)
+
+    # Preprocessing parameters
+    negative_policy: str = "clamp"  # "clamp" | "fail_loud" | "hybrid"
+    hourly_grid_policy: str = "drop_incomplete_series"  # "drop_incomplete_series" | "fail_loud"
 
     # Output paths
     data_dir: str = "data/renewable"
@@ -128,6 +136,9 @@ class RenewablePipelineConfig:
 
     def interpretability_dir(self) -> Path:
         return Path(self.data_dir) / "interpretability"
+
+    def preprocessing_dir(self) -> Path:
+        return Path(self.data_dir) / "preprocessing"
 
 
 def fetch_renewable_data(
@@ -692,9 +703,29 @@ def run_full_pipeline(
     weather_df = fetch_renewable_weather(config)
     results["weather_rows"] = len(weather_df)
 
-    # Step 3: Train and validate
+    # Step 2.5: Build modeling-ready dataset with preprocessing
+    logger.info("[pipeline] Building modeling dataset (dataset_builder.py)")
+    modeling_df, prep_report = build_modeling_dataset(
+        generation_df,
+        weather_df,
+        negative_policy=config.negative_policy,
+        hourly_grid_policy=config.hourly_grid_policy,
+        output_dir=config.preprocessing_dir()
+    )
+
+    results["preprocessing"] = {
+        "rows_input": prep_report.rows_input,
+        "rows_output": prep_report.rows_output,
+        "series_dropped": len(prep_report.series_dropped_incomplete),
+        "negative_action": prep_report.negative_values_action,
+        "time_features": prep_report.time_features_added,
+        "weather_features": prep_report.weather_features_added,
+    }
+    logger.info(f"[pipeline] Preprocessing: {prep_report.rows_input:,} → {prep_report.rows_output:,} rows")
+
+    # Step 3: Train and validate (on preprocessed data)
     cv_results, leaderboard, baseline = train_renewable_models(
-        config, generation_df, weather_df
+        config, modeling_df, weather_df=None  # Weather already merged by dataset_builder
     )
     best_model = leaderboard.iloc[0]["model"]
     results["best_model"] = best_model
@@ -705,29 +736,34 @@ def run_full_pipeline(
 
     # Step 4: Generate forecasts (use the best model from CV)
     forecasts = generate_renewable_forecasts(
-        config, generation_df, weather_df, best_model=best_model
+        config, modeling_df, weather_df=None, best_model=best_model
     )
     results["forecast_rows"] = len(forecasts)
 
-    # Step 5: Train LightGBM models and generate interpretability reports
+    # Step 5: Train LightGBM models and generate interpretability reports (optional)
     # (LightGBM is for interpretability only - MSTL/ARIMA provide primary forecasts)
-    try:
-        interpretability_reports = train_interpretability_models(
-            config, generation_df, weather_df
-        )
-        results["interpretability"] = {
-            "series_count": len(interpretability_reports),
-            "series": list(interpretability_reports.keys()),
-            "output_dir": str(config.interpretability_dir()),
-        }
+    if config.enable_interpretability:
+        logger.info("[pipeline] Training interpretability models (LightGBM + SHAP)")
+        try:
+            interpretability_reports = train_interpretability_models(
+                config, generation_df, weather_df
+            )
+            results["interpretability"] = {
+                "series_count": len(interpretability_reports),
+                "series": list(interpretability_reports.keys()),
+                "output_dir": str(config.interpretability_dir()),
+            }
 
-        # Add top features summary per series
-        for uid, report in interpretability_reports.items():
-            results["interpretability"][f"{uid}_top_features"] = report.top_features[:3]
+            # Add top features summary per series
+            for uid, report in interpretability_reports.items():
+                results["interpretability"][f"{uid}_top_features"] = report.top_features[:3]
 
-    except Exception as e:
-        logger.warning(f"[pipeline] Interpretability training failed (non-fatal): {e}")
-        results["interpretability"] = {"error": str(e)}
+        except Exception as e:
+            logger.warning(f"[pipeline] Interpretability training failed (non-fatal): {e}")
+            results["interpretability"] = {"error": str(e)}
+    else:
+        logger.info("[pipeline] Interpretability disabled (enable_interpretability=False)")
+        results["interpretability"] = {"enabled": False}
 
     if fetch_diagnostics is not None:
         results["fetch_diagnostics"] = fetch_diagnostics
@@ -739,32 +775,74 @@ def run_full_pipeline(
 
 def main():
     """CLI entry point for renewable pipeline."""
-    parser = argparse.ArgumentParser(description="Renewable Energy Forecasting Pipeline")
+    parser = argparse.ArgumentParser(
+        description="Renewable Energy Forecasting Pipeline",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Preset Examples:
+  # Fast development (24h forecast, 2 CV windows, 15 days lookback)
+  python -m src.renewable.tasks --preset 24h
 
+  # Standard forecasting (48h forecast, 3 CV windows, 21 days lookback)
+  python -m src.renewable.tasks --preset 48h
+
+  # Extended planning (72h forecast, 3 CV windows, 28 days lookback)
+  python -m src.renewable.tasks --preset 72h
+
+Custom Examples:
+  # 24h preset but only CALI region, skip interpretability
+  python -m src.renewable.tasks --preset 24h --regions CALI --no-interpretability
+
+  # Custom: 36h forecast with 4 CV windows
+  python -m src.renewable.tasks --horizon 36 --cv-windows 4 --lookback-days 30
+        """
+    )
+
+    # Preset system (NEW)
+    parser.add_argument(
+        "--preset",
+        type=str,
+        choices=["24h", "48h", "72h"],
+        help="Quick preset: 24h (fast dev), 48h (standard), 72h (extended planning)",
+    )
+
+    # Flags (NEW)
+    parser.add_argument(
+        "--no-interpretability",
+        action="store_true",
+        help="Disable LightGBM interpretability analysis (speeds up pipeline)",
+    )
+
+    # Data parameters (existing)
     parser.add_argument(
         "--regions",
         type=str,
-        default="CALI,ERCO,MISO",
-        help="Comma-separated region codes (default: CALI,ERCO,MISO)",
+        help="Override regions (comma-separated, e.g., CALI,ERCO,MISO)",
     )
     parser.add_argument(
         "--fuel",
         type=str,
-        default="WND,SUN",
-        help="Comma-separated fuel types (default: WND,SUN)",
+        help="Override fuel types (comma-separated, e.g., WND,SUN)",
     )
-    parser.add_argument(
-        "--days",
-        type=int,
-        default=30,
-        help="Lookback days (default: 30)",
-    )
+
+    # Forecast parameters (existing + new)
     parser.add_argument(
         "--horizon",
         type=int,
-        default=24,
-        help="Forecast horizon in hours (default: 24)",
+        help="Override forecast horizon in hours",
     )
+    parser.add_argument(
+        "--lookback-days",
+        type=int,
+        help="Override lookback days",
+    )
+    parser.add_argument(
+        "--cv-windows",
+        type=int,
+        help="Override CV windows count",
+    )
+
+    # Output parameters
     parser.add_argument(
         "--overwrite",
         action="store_true",
@@ -785,15 +863,42 @@ def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    # Build config
-    config = RenewablePipelineConfig(
-        regions=args.regions.split(","),
-        fuel_types=args.fuel.split(","),
-        lookback_days=args.days,
-        horizon=args.horizon,
-        overwrite=args.overwrite,
-        data_dir=args.data_dir,
-    )
+    # Build config with preset support
+    if args.preset:
+        # Apply preset defaults
+        logger.info(f"[CLI] Applying preset: {args.preset}")
+        config = RenewablePipelineConfig(
+            horizon_preset=args.preset,  # This triggers __post_init__ to apply preset
+            regions=args.regions.split(",") if args.regions else ["CALI", "ERCO", "MISO"],
+            fuel_types=args.fuel.split(",") if args.fuel else ["WND", "SUN"],
+            enable_interpretability=not args.no_interpretability,
+            overwrite=args.overwrite,
+            data_dir=args.data_dir,
+        )
+
+        # Allow CLI overrides of preset values
+        if args.horizon is not None:
+            object.__setattr__(config, "horizon", args.horizon)
+            logger.info(f"[CLI] Override: horizon={args.horizon}h")
+        if args.lookback_days is not None:
+            object.__setattr__(config, "lookback_days", args.lookback_days)
+            logger.info(f"[CLI] Override: lookback_days={args.lookback_days}")
+        if args.cv_windows is not None:
+            object.__setattr__(config, "cv_windows", args.cv_windows)
+            logger.info(f"[CLI] Override: cv_windows={args.cv_windows}")
+
+    else:
+        # No preset: use explicit values or defaults
+        config = RenewablePipelineConfig(
+            regions=args.regions.split(",") if args.regions else ["CALI", "ERCO", "MISO"],
+            fuel_types=args.fuel.split(",") if args.fuel else ["WND", "SUN"],
+            lookback_days=args.lookback_days if args.lookback_days else 30,
+            horizon=args.horizon if args.horizon else 24,
+            cv_windows=args.cv_windows if args.cv_windows else 5,
+            enable_interpretability=not args.no_interpretability,
+            overwrite=args.overwrite,
+            data_dir=args.data_dir,
+        )
 
     # Run pipeline
     results = run_full_pipeline(config)

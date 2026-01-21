@@ -1,5 +1,5 @@
 {
-  "run_at_utc": "2026-01-21T18:55:34.548735+00:00",
+  "run_at_utc": "2026-01-21T19:54:18.234115+00:00",
   "config": {
     "regions": [
       "CALI",
@@ -21,92 +21,92 @@
   "pipeline_results": {
     "generation_rows": 4358,
     "series_count": 6,
-    "weather_rows": 2361,
+    "weather_rows": 2364,
     "best_model": "AutoARIMA",
-    "best_rmse": 2386.9448678164044,
+    "best_rmse": 2433.288420179038,
     "baseline": {
       "model": "AutoARIMA",
-      "rmse_mean": 1920.2495839581616,
-      "rmse_std": 1417.796648784154,
-      "mae_mean": 1398.3110382971715,
-      "mae_std": 987.6129350020168,
-      "drift_threshold_rmse": 4755.84288152647,
-      "drift_threshold_mae": 3373.536908301205,
+      "rmse_mean": 1956.3498267614807,
+      "rmse_std": 1446.9235954630512,
+      "mae_mean": 1483.8254544755644,
+      "mae_std": 1047.9947828840536,
+      "drift_threshold_rmse": 4850.197017687583,
+      "drift_threshold_mae": 3579.815020243672,
       "n_series": 6,
       "n_windows": 6,
       "per_window_rows": 12,
       "per_series": [
         {
           "unique_id": "CALI_SUN",
-          "rmse_mean": 1506.2304436079821,
-          "rmse_std": 503.7634828373527,
-          "mae_mean": 1039.4871686078554,
-          "mae_std": 246.2486622156472,
-          "drift_threshold_rmse": 2513.7574092826876,
-          "drift_threshold_mae": 1531.9844930391498
+          "rmse_mean": 1500.1769164780217,
+          "rmse_std": 500.07218489388214,
+          "mae_mean": 1071.2399729934345,
+          "mae_std": 201.8750852933428,
+          "drift_threshold_rmse": 2500.321286265786,
+          "drift_threshold_mae": 1474.9901435801203
         },
         {
           "unique_id": "CALI_WND",
-          "rmse_mean": 194.9098983474737,
-          "rmse_std": 105.26606957628381,
-          "mae_mean": 168.16812397602843,
-          "mae_std": 96.31198893643301,
-          "drift_threshold_rmse": 405.44203750004135,
-          "drift_threshold_mae": 360.79210184889445
+          "rmse_mean": 211.86521824818448,
+          "rmse_std": 122.28094060800741,
+          "mae_mean": 181.28551177247476,
+          "mae_std": 109.46645540954349,
+          "drift_threshold_rmse": 456.4270994641993,
+          "drift_threshold_mae": 400.21842259156176
         },
         {
           "unique_id": "ERCO_SUN",
-          "rmse_mean": 2402.862455145053,
-          "rmse_std": 35.26065991173982,
-          "mae_mean": 1497.5165162888673,
-          "mae_std": 108.83916805058061,
-          "drift_threshold_rmse": 2473.3837749685326,
-          "drift_threshold_mae": 1715.1948523900285
+          "rmse_mean": 2406.176327763962,
+          "rmse_std": 32.838464694849336,
+          "mae_mean": 1499.1280695854075,
+          "mae_std": 106.9189273968816,
+          "drift_threshold_rmse": 2471.8532571536607,
+          "drift_threshold_mae": 1712.9659243791707
         },
         {
           "unique_id": "ERCO_WND",
-          "rmse_mean": 3802.497815767464,
-          "rmse_std": 1932.8284396958932,
-          "mae_mean": 2577.730116014819,
-          "mae_std": 1280.4848064443063,
-          "drift_threshold_rmse": 7668.15469515925,
-          "drift_threshold_mae": 5138.699728903432
+          "rmse_mean": 3664.304625414039,
+          "rmse_std": 1904.596723640444,
+          "mae_mean": 2573.3343638045444,
+          "mae_std": 1142.1168050687745,
+          "drift_threshold_rmse": 7473.498072694927,
+          "drift_threshold_mae": 4857.567973942094
         },
         {
           "unique_id": "MISO_SUN",
-          "rmse_mean": 1077.6991954030086,
-          "rmse_std": 171.5478206323433,
-          "mae_mean": 846.9730790482087,
-          "mae_std": 49.95820888869457,
-          "drift_threshold_rmse": 1420.794836667695,
-          "drift_threshold_mae": 946.8894968255978
+          "rmse_mean": 982.6042371962931,
+          "rmse_std": 61.201275986235714,
+          "mae_mean": 896.6217107568586,
+          "mae_std": 67.55413163091862,
+          "drift_threshold_rmse": 1105.0067891687645,
+          "drift_threshold_mae": 1031.7299740186959
         },
         {
           "unique_id": "MISO_WND",
-          "rmse_mean": 2537.297695477989,
-          "rmse_std": 122.08885080144387,
-          "mae_mean": 2259.9912258472496,
-          "mae_std": 197.57223738544644,
-          "drift_threshold_rmse": 2781.4753970808765,
-          "drift_threshold_mae": 2655.1357006181424
+          "rmse_mean": 2972.9716354683833,
+          "rmse_std": 558.3151114390455,
+          "mae_mean": 2681.3430979406658,
+          "mae_std": 619.3853906766983,
+          "drift_threshold_rmse": 4089.6018583464743,
+          "drift_threshold_mae": 3920.1138792940624
         }
       ]
     },
     "leaderboard": [
       {
         "model": "AutoARIMA",
-        "rmse": 2386.9448678164044,
-        "mae": 1398.3110382971715,
-        "mape": 1731.1565566541312,
+        "rmse": 2433.288420179038,
+        "mae": 1483.8254544755644,
+        "mape": 4001.7916789279384,
         "valid_rows": 288,
-        "coverage_80": 92.01388888888889,
+        "coverage_80": 93.40277777777779,
         "coverage_95": 97.91666666666666
       },
       {
         "model": "AutoTheta",
         "rmse": 2762.2400132883613,
         "mae": 1673.3052793063657,
-        "mape": 194.51571399683039,
+        "mape": 194.5157139968305,
         "valid_rows": 288,
         "coverage_80": 93.75,
         "coverage_95": 100.0
@@ -122,21 +122,21 @@
       },
       {
         "model": "AutoETS",
-        "rmse": 3898.871041738173,
-        "mae": 2242.4351794762,
-        "mape": 1579.6636562463184,
+        "rmse": 3898.87104173818,
+        "mae": 2242.4351794762288,
+        "mape": 1579.663656247538,
         "valid_rows": 288,
         "coverage_80": 88.88888888888889,
         "coverage_95": 96.52777777777779
       },
       {
         "model": "MSTL_ARIMA",
-        "rmse": 4315.001787398628,
-        "mae": 2520.5484479089823,
-        "mape": 1594.8510583843333,
+        "rmse": 4261.252694588962,
+        "mae": 2481.7412880246898,
+        "mape": 1600.1283470190679,
         "valid_rows": 288,
-        "coverage_80": 72.56944444444444,
-        "coverage_95": 81.94444444444444
+        "coverage_80": 73.26388888888889,
+        "coverage_95": 84.72222222222221
       },
       {
         "model": "SeasonalNaive",
@@ -223,16 +223,6 @@
         "empty": false
       },
       {
-        "region": "MISO",
-        "fuel_type": "SUN",
-        "start_date": "2025-12-22",
-        "end_date": "2026-01-21",
-        "total_records": 725,
-        "pages": 1,
-        "rows_parsed": 725,
-        "empty": false
-      },
-      {
         "region": "ERCO",
         "fuel_type": "SUN",
         "start_date": "2025-12-22",
@@ -240,6 +230,16 @@
         "total_records": 726,
         "pages": 1,
         "rows_parsed": 726,
+        "empty": false
+      },
+      {
+        "region": "MISO",
+        "fuel_type": "SUN",
+        "start_date": "2025-12-22",
+        "end_date": "2026-01-21",
+        "total_records": 725,
+        "pages": 1,
+        "rows_parsed": 725,
         "empty": false
       },
       {
@@ -261,7 +261,7 @@
       "row_count": 4358,
       "series_count": 6,
       "max_ds": "2026-01-21T07:00:00+00:00",
-      "lag_hours": 11.0,
+      "lag_hours": 12.0,
       "worst_missing_ratio": 0.0
     }
   },
@@ -298,16 +298,6 @@
         "empty": false
       },
       {
-        "region": "MISO",
-        "fuel_type": "SUN",
-        "start_date": "2025-12-22",
-        "end_date": "2026-01-21",
-        "total_records": 725,
-        "pages": 1,
-        "rows_parsed": 725,
-        "empty": false
-      },
-      {
         "region": "ERCO",
         "fuel_type": "SUN",
         "start_date": "2025-12-22",
@@ -315,6 +305,16 @@
         "total_records": 726,
         "pages": 1,
         "rows_parsed": 726,
+        "empty": false
+      },
+      {
+        "region": "MISO",
+        "fuel_type": "SUN",
+        "start_date": "2025-12-22",
+        "end_date": "2026-01-21",
+        "total_records": 725,
+        "pages": 1,
+        "rows_parsed": 725,
         "empty": false
       },
       {

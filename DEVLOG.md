@@ -1,6 +1,61 @@
 # Development Log
 
-## 2026-01-20: Pre-commit CI Failure - UTF-16 Encoding Issue
+## 2026-01-20: Pre-commit CI Failure - UTF-16 Encoding Issue (Part 2)
+
+### Problem - Second Occurrence
+CI pre-commit hook **STILL FAILED** on commit `53186b7`:
+```
+fix end of files.........................................................Failed
+Fixing report.txt
+Binary files a/report.txt and b/report.txt differ
+```
+
+### Root Cause Analysis - Why First Fix Didn't Work
+**Deletion not committed**: First commit (`53186b7`) included .gitignore changes but **NOT** the file deletions!
+
+**Evidence**:
+```bash
+$ git ls-files | grep report.txt
+report.txt    # ← STILL TRACKED!
+
+$ git show 53186b7 --name-status
+M  .gitignore   # Modified ✅
+A  report_utf8.txt   # Added (should be ignored!) ❌
+A  test_encoding_output.txt   # Added (should be ignored!) ❌
+# NO "D" for report.txt deletion! ❌
+```
+
+**Why this happened**:
+1. `.gitignore` only prevents **NEW** files from being tracked
+2. It does **NOT** remove already-committed files from git
+3. Must explicitly use `git rm --cached` **AND commit the deletion**
+
+### Resolution - Part 2
+**Fix 1: Actually delete tracked files**
+```bash
+git rm --cached report.txt report_utf8.txt test_encoding_output.txt
+```
+
+**Fix 2: Improve .gitignore patterns**
+- Before: `*_report.txt` (doesn't match `report_utf8.txt`)
+- After: Added `report_*.txt`, `test_*.txt`, `*_output.txt`
+- Verified: `git check-ignore -v` confirms all patterns work
+
+### Key Lesson
+**`.gitignore` is NOT retroactive!** It only affects untracked files. To remove already-tracked files:
+1. `git rm --cached <file>`  (stage deletion)
+2. `git commit`  (commit the deletion)
+3. Push to remote
+
+### Files Changed (Part 2)
+- `.gitignore` - Improved patterns (added `report_*.txt`, `test_*.txt`, `*_output.txt`)
+- `report.txt` - **DELETED** from git tracking
+- `report_utf8.txt` - **DELETED** from git tracking
+- `test_encoding_output.txt` - **DELETED** from git tracking
+
+---
+
+## 2026-01-20: Pre-commit CI Failure - UTF-16 Encoding Issue (Part 1)
 
 ### Problem
 CI pre-commit hook failed with:
@@ -26,10 +81,10 @@ Binary files a/report.txt and b/report.txt differ
 3. Traced origin: Output from `investigate_solar_data_quality.py`
 4. Verified git history: File committed in `dc937ee`
 
-### Resolution
+### Resolution (Part 1 - Incomplete)
 **Fix 1: Add generated files to .gitignore**
 - Added: `report.txt`, `*_report.txt`, `solar_investigation_report*.txt`, `interpretability/`, `nul`
-- Removed from git: `git rm --cached report.txt`
+- ⚠️ Attempted: `git rm --cached report.txt` (but deletion not committed!)
 
 **Fix 2: Force UTF-8 output in scripts**
 - Updated `scripts/investigate_solar_data_quality.py` (lines 23-25)

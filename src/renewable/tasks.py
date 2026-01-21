@@ -320,6 +320,26 @@ def fetch_renewable_weather(
         end_date=config.end_date,
     )
 
+    # Validate historical weather result
+    if hist_df.empty:
+        raise RuntimeError(
+            "[fetch_weather] Historical weather returned empty DataFrame. "
+            "fetch_all_regions_historical should raise an error on failure, "
+            "but received empty result. Check fetch logic."
+        )
+
+    if not {"ds", "region"}.issubset(hist_df.columns):
+        missing_cols = {"ds", "region"} - set(hist_df.columns)
+        raise ValueError(
+            f"[fetch_weather] Weather DataFrame missing required columns: {missing_cols}"
+        )
+
+    hist_regions = hist_df['region'].nunique()
+    hist_rows = len(hist_df)
+    logger.info(
+        f"[fetch_weather] Historical: {hist_regions} regions, {hist_rows} rows"
+    )
+
     # Forecast weather (for prediction, prevents leakage)
     if include_forecast:
         fcst_df = weather.fetch_all_regions_forecast(
@@ -327,9 +347,20 @@ def fetch_renewable_weather(
             horizon_hours=config.horizon + 24,  # Buffer
         )
 
-        # Combine, preferring forecast for overlapping times
-        combined = pd.concat([hist_df, fcst_df], ignore_index=True)
-        combined = combined.drop_duplicates(subset=["ds", "region"], keep="last")
+        # Validate forecast weather result
+        if fcst_df.empty:
+            logger.warning(
+                "[fetch_weather] Forecast weather returned empty DataFrame. "
+                "Using historical data only for model training and predictions."
+            )
+            combined = hist_df
+        else:
+            fcst_rows = len(fcst_df)
+            logger.info(f"[fetch_weather] Forecast: {fcst_rows} rows")
+
+            # Combine, preferring forecast for overlapping times
+            combined = pd.concat([hist_df, fcst_df], ignore_index=True)
+            combined = combined.drop_duplicates(subset=["ds", "region"], keep="last")
     else:
         combined = hist_df
 

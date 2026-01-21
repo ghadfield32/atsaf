@@ -164,29 +164,68 @@ class OpenMeteoRenewable:
         *,
         debug: bool = False,
     ) -> pd.DataFrame:
+        """Fetch historical weather for all regions.
+
+        Args:
+            regions: List of region codes
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+            debug: Enable debug logging
+
+        Returns:
+            DataFrame with columns [ds, region, weather_vars...]
+
+        Raises:
+            RuntimeError: If no regions could be fetched (complete failure)
+            ValueError: If API responses are invalid
+        """
         all_dfs: list[pd.DataFrame] = []
+        failed_regions: list[tuple[str, str, str]] = []  # (region, error_type, error_msg)
+
         for region in regions:
             try:
                 df = self.fetch_for_region(region, start_date, end_date, debug=debug)
                 all_dfs.append(df)
-                print(f"[OK] Weather for {region}: {len(df)} rows")
+                print(f"[OK] Historical weather for {region}: {len(df)} rows")
             except requests.exceptions.Timeout as e:
-                print(f"[FAIL] Weather for {region}: TIMEOUT after {self.timeout}s - {type(e).__name__}: {e}")
+                failed_regions.append((region, "TIMEOUT", str(e)))
+                print(f"[FAIL] Historical weather for {region}: TIMEOUT after {self.timeout}s - {type(e).__name__}: {e}")
             except requests.exceptions.ConnectionError as e:
-                print(f"[FAIL] Weather for {region}: CONNECTION_ERROR - {type(e).__name__}: {e}")
+                failed_regions.append((region, "CONNECTION_ERROR", str(e)))
+                print(f"[FAIL] Historical weather for {region}: CONNECTION_ERROR - {type(e).__name__}: {e}")
             except requests.exceptions.JSONDecodeError as e:
-                print(f"[FAIL] Weather for {region}: JSON_PARSE_ERROR - {type(e).__name__}: {e}")
+                failed_regions.append((region, "JSON_PARSE_ERROR", str(e)))
+                print(f"[FAIL] Historical weather for {region}: JSON_PARSE_ERROR - {type(e).__name__}: {e}")
             except Exception as e:
-                print(f"[FAIL] Weather for {region}: {type(e).__name__}: {e}")
+                failed_regions.append((region, type(e).__name__, str(e)))
+                print(f"[FAIL] Historical weather for {region}: {type(e).__name__}: {e}")
 
+        # Explicit validation: require at least one successful region
         if not all_dfs:
-            return pd.DataFrame()
+            error_details = "; ".join([f"{r[0]}({r[1]})" for r in failed_regions])
+            raise RuntimeError(
+                f"[OPENMETEO][HIST] Failed to fetch historical weather for ALL regions. "
+                f"Failures: {error_details}. "
+                f"Check Open-Meteo API availability, network connectivity, and date range validity."
+            )
 
-        return (
+        # Warn if partial failure (some regions succeeded, some failed)
+        if failed_regions:
+            failed_count = len(failed_regions)
+            total_count = len(regions)
+            print(f"[WARNING] Partial weather fetch: {failed_count}/{total_count} regions failed")
+            for region, error_type, error_msg in failed_regions:
+                print(f"  - {region}: {error_type}")
+
+        result = (
             pd.concat(all_dfs, ignore_index=True)
             .sort_values(["region", "ds"])
             .reset_index(drop=True)
         )
+
+        print(f"[SUMMARY] Historical weather: {result['region'].nunique()} regions, {len(result)} total rows")
+
+        return result
 
     def _parse_response(
         self,
@@ -269,31 +308,88 @@ class OpenMeteoRenewable:
         *,
         debug: bool = False,
     ) -> pd.DataFrame:
+        """Fetch forecast weather for all regions.
+
+        Args:
+            regions: List of region codes
+            horizon_hours: Number of hours to forecast
+            variables: Weather variables to fetch
+            debug: Enable debug logging
+
+        Returns:
+            DataFrame with columns [ds, region, weather_vars...]
+
+        Raises:
+            RuntimeError: If no regions could be fetched (complete failure)
+            ValueError: If API responses are invalid
+        """
         all_dfs: list[pd.DataFrame] = []
+        failed_regions: list[tuple[str, str, str]] = []
+
         for region in regions:
             try:
                 df = self.fetch_for_region_forecast(
-                    region, horizon_hours=horizon_hours, variables=variables, debug=debug
+                    region,
+                    horizon_hours=horizon_hours,
+                    variables=variables,
+                    debug=debug
                 )
                 all_dfs.append(df)
                 print(f"[OK] Forecast weather for {region}: {len(df)} rows")
             except requests.exceptions.Timeout as e:
-                print(f"[FAIL] Forecast weather for {region}: TIMEOUT after {self.timeout}s - {type(e).__name__}: {e}")
+                failed_regions.append((region, "TIMEOUT", str(e)))
+                print(
+                    f"[FAIL] Forecast weather for {region}: TIMEOUT after "
+                    f"{self.timeout}s - {type(e).__name__}: {e}"
+                )
             except requests.exceptions.ConnectionError as e:
-                print(f"[FAIL] Forecast weather for {region}: CONNECTION_ERROR - {type(e).__name__}: {e}")
+                failed_regions.append((region, "CONNECTION_ERROR", str(e)))
+                print(
+                    f"[FAIL] Forecast weather for {region}: CONNECTION_ERROR "
+                    f"- {type(e).__name__}: {e}"
+                )
             except requests.exceptions.JSONDecodeError as e:
-                print(f"[FAIL] Forecast weather for {region}: JSON_PARSE_ERROR - {type(e).__name__}: {e}")
+                failed_regions.append((region, "JSON_PARSE_ERROR", str(e)))
+                print(
+                    f"[FAIL] Forecast weather for {region}: JSON_PARSE_ERROR "
+                    f"- {type(e).__name__}: {e}"
+                )
             except Exception as e:
-                print(f"[FAIL] Forecast weather for {region}: {type(e).__name__}: {e}")
+                failed_regions.append((region, type(e).__name__, str(e)))
+                print(
+                    f"[FAIL] Forecast weather for {region}: {type(e).__name__}: {e}"
+                )
 
+        # Explicit validation: require at least one successful region
         if not all_dfs:
-            return pd.DataFrame()
+            error_details = "; ".join([f"{r[0]}({r[1]})" for r in failed_regions])
+            raise RuntimeError(
+                f"[OPENMETEO][FCST] Failed to fetch forecast weather for "
+                f"ALL regions. Failures: {error_details}. "
+                f"Check Open-Meteo API availability and network connectivity."
+            )
 
-        return (
+        # Warn if partial failure
+        if failed_regions:
+            failed_count = len(failed_regions)
+            total_count = len(regions)
+            print(
+                f"[WARNING] Partial forecast fetch: {failed_count}/{total_count} "
+                f"regions failed"
+            )
+            for region, error_type, error_msg in failed_regions:
+                print(f"  - {region}: {error_type}")
+
+        result = (
             pd.concat(all_dfs, ignore_index=True)
             .sort_values(["region", "ds"])
             .reset_index(drop=True)
         )
+
+        print(f"[SUMMARY] Forecast weather: {result['region'].nunique()} regions, "
+              f"{len(result)} total rows")
+
+        return result
 
 
 

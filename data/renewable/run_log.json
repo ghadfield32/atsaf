@@ -1,5 +1,5 @@
 {
-  "run_at_utc": "2026-01-21T20:54:20.745093+00:00",
+  "run_at_utc": "2026-01-21T21:53:06.817389+00:00",
   "config": {
     "regions": [
       "CALI",
@@ -21,7 +21,7 @@
   "pipeline_results": {
     "generation_rows": 4358,
     "series_count": 6,
-    "weather_rows": 2367,
+    "weather_rows": 2370,
     "best_model": "AutoARIMA",
     "best_rmse": 2386.9448678164044,
     "baseline": {
@@ -193,16 +193,6 @@
     },
     "fetch_diagnostics": [
       {
-        "region": "ERCO",
-        "fuel_type": "WND",
-        "start_date": "2025-12-22",
-        "end_date": "2026-01-21",
-        "total_records": 726,
-        "pages": 1,
-        "rows_parsed": 726,
-        "empty": false
-      },
-      {
         "region": "CALI",
         "fuel_type": "WND",
         "start_date": "2025-12-22",
@@ -224,7 +214,7 @@
       },
       {
         "region": "ERCO",
-        "fuel_type": "SUN",
+        "fuel_type": "WND",
         "start_date": "2025-12-22",
         "end_date": "2026-01-21",
         "total_records": 726,
@@ -240,6 +230,16 @@
         "total_records": 725,
         "pages": 1,
         "rows_parsed": 725,
+        "empty": false
+      },
+      {
+        "region": "ERCO",
+        "fuel_type": "SUN",
+        "start_date": "2025-12-22",
+        "end_date": "2026-01-21",
+        "total_records": 726,
+        "pages": 1,
+        "rows_parsed": 726,
         "empty": false
       },
       {
@@ -261,22 +261,12 @@
       "row_count": 4358,
       "series_count": 6,
       "max_ds": "2026-01-21T07:00:00+00:00",
-      "lag_hours": 13.0,
+      "lag_hours": 14.0,
       "worst_missing_ratio": 0.0
     }
   },
   "diagnostics": {
     "fetch": [
-      {
-        "region": "ERCO",
-        "fuel_type": "WND",
-        "start_date": "2025-12-22",
-        "end_date": "2026-01-21",
-        "total_records": 726,
-        "pages": 1,
-        "rows_parsed": 726,
-        "empty": false
-      },
       {
         "region": "CALI",
         "fuel_type": "WND",
@@ -299,7 +289,7 @@
       },
       {
         "region": "ERCO",
-        "fuel_type": "SUN",
+        "fuel_type": "WND",
         "start_date": "2025-12-22",
         "end_date": "2026-01-21",
         "total_records": 726,
@@ -315,6 +305,16 @@
         "total_records": 725,
         "pages": 1,
         "rows_parsed": 725,
+        "empty": false
+      },
+      {
+        "region": "ERCO",
+        "fuel_type": "SUN",
+        "start_date": "2025-12-22",
+        "end_date": "2026-01-21",
+        "total_records": 726,
+        "pages": 1,
+        "rows_parsed": 726,
         "empty": false
       },
       {

@@ -1,5 +1,5 @@
 # file: .github/workflows/renewable-hourly.yml
-name: renewable-hourly-update
+name: renewable-hourly
 
 on:
   workflow_dispatch:

@@ -22,5 +22,8 @@ report_*.txt
 solar_investigation_report*.txt
 test_*.txt
 *_output.txt
-interpretability/
+# Note: data/renewable/interpretability/ is tracked in git for model transparency
+# Only ignore interpretability dirs in scripts/notebooks
+scripts/interpretability/
+notebooks/interpretability/
 nul

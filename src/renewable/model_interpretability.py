@@ -17,10 +17,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend for server-side rendering
-
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -28,14 +24,23 @@ logger = logging.getLogger(__name__)
 
 # Optional imports - gracefully handle if not installed
 try:
-    import shap
+    import matplotlib  # noqa: E402
+    matplotlib.use('Agg')  # Non-interactive backend for server-side rendering
+    import matplotlib.pyplot as plt  # noqa: E402
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    logger.warning("matplotlib not installed - visualization features will be unavailable")
+
+try:
+    import shap  # noqa: E402
     SHAP_AVAILABLE = True
 except ImportError:
     SHAP_AVAILABLE = False
     logger.warning("shap not installed - SHAP plots will be unavailable")
 
 try:
-    from sklearn.inspection import PartialDependenceDisplay
+    from sklearn.inspection import PartialDependenceDisplay  # noqa: E402
     PDP_AVAILABLE = True
 except ImportError:
     PDP_AVAILABLE = False
@@ -145,7 +150,7 @@ def generate_shap_summary_plot(
     Returns:
         True if plot was generated successfully, False otherwise
     """
-    if not SHAP_AVAILABLE or shap_values is None:
+    if not SHAP_AVAILABLE or not MATPLOTLIB_AVAILABLE or shap_values is None:
         return False
 
     try:
@@ -195,7 +200,7 @@ def generate_shap_bar_plot(
     Returns:
         True if successful, False otherwise
     """
-    if not SHAP_AVAILABLE or shap_values is None:
+    if not SHAP_AVAILABLE or not MATPLOTLIB_AVAILABLE or shap_values is None:
         return False
 
     try:
@@ -248,7 +253,7 @@ def generate_shap_dependence_plot(
     Returns:
         True if successful, False otherwise
     """
-    if not SHAP_AVAILABLE or shap_values is None:
+    if not SHAP_AVAILABLE or not MATPLOTLIB_AVAILABLE or shap_values is None:
         return False
 
     if feature not in X_sample.columns:
@@ -304,7 +309,7 @@ def generate_shap_waterfall(
     Returns:
         True if successful, False otherwise
     """
-    if not SHAP_AVAILABLE or explainer is None:
+    if not SHAP_AVAILABLE or not MATPLOTLIB_AVAILABLE or explainer is None:
         return False
 
     try:
@@ -355,8 +360,8 @@ def generate_partial_dependence_plot(
     Returns:
         True if successful, False otherwise
     """
-    if not PDP_AVAILABLE:
-        logger.warning("PDP not available - skipping partial dependence plot")
+    if not PDP_AVAILABLE or not MATPLOTLIB_AVAILABLE:
+        logger.warning("PDP or matplotlib not available - skipping partial dependence plot")
         return False
 
     # Filter to features that exist in X_train

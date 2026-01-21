@@ -1,5 +1,147 @@
 # Development Log
 
+## 2026-01-21: GitHub Actions Failures - Interpretability Artifacts & Missing Dependencies
+
+### Problem - Two Independent GitHub Actions Failures
+
+**Error 1: Git ignore conflict**
+```bash
+Run git add data/renewable/interpretability/
+The following paths are ignored by one of your .gitignore files:
+data/renewable/interpretability
+hint: Use -f if you really want to add them.
+Error: Process completed with exit code 1.
+```
+
+**Error 2: Missing matplotlib**
+```python
+File "src/renewable/model_interpretability.py", line 20, in <module>
+    import matplotlib
+ModuleNotFoundError: No module named 'matplotlib'
+```
+
+### Root Cause Analysis
+
+**Error 1: Interpretability artifacts blocked by .gitignore**
+- **Intent**: Workflow tries to commit `data/renewable/interpretability/` for model transparency tracking
+- **Conflict**: `.gitignore:25` had broad pattern `interpretability/` that blocks ALL interpretability directories
+- **Origin**: Pattern added in commit `53186b7` alongside temp files (assumed all interpretability was temporary)
+- **Impact**: Legitimate model artifacts can't be committed, breaking the automation workflow
+
+**Error 2: Fragile dependency installation**
+- **Root issues** (compound failure):
+  1. **Wrong installation method**: Workflow manually lists packages instead of using `pyproject.toml`
+  2. **Split commands**: Dependencies split across TWO pip commands (lines 60-61)
+  3. **matplotlib in second batch**: If first command fails/has issues, matplotlib never installs
+  4. **Required import**: `model_interpretability.py:20` imports matplotlib WITHOUT try/except
+  5. **Import chain failure**: `run_hourly.py` → `tasks.py` → `model_interpretability.py:20` fails at MODULE LOAD
+  6. **Design inconsistency**: `shap` and `sklearn` are optional (try/except), but matplotlib was required
+- **Single source of truth**: `pyproject.toml:52` defines `matplotlib>=3.7.0`, but workflow doesn't use it
+
+### Resolution
+
+**Fix 1: Update .gitignore to allow data artifacts**
+
+Changed from broad pattern to specific exclusions:
+```diff
+-.gitignore:25
+-interpretability/
++.gitignore:25-28
++# Note: data/renewable/interpretability/ is tracked for model transparency
++# Only ignore interpretability dirs in scripts/notebooks
++scripts/interpretability/
++notebooks/interpretability/
+```
+
+**Verification**:
+- `data/renewable/interpretability/` → NOT ignored (can be committed) ✅
+- `scripts/interpretability/` → Ignored ✅
+- `notebooks/interpretability/` → Ignored ✅
+
+**Fix 2: Install from pyproject.toml (single source of truth)**
+
+Changed workflow to use proper package installation:
+```diff
+-.github/workflows/renewable-hourly.yml:60-61
+-pip install pandas numpy requests python-dotenv pyarrow statsforecast
+-pip install lightgbm shap skforecast scikit-learn matplotlib
++.github/workflows/renewable-hourly.yml:60-62
++# Install from pyproject.toml for single source of truth
++# Use -e for editable install (allows imports to work correctly)
++pip install -e .
+```
+
+**Benefits**:
+- Single source of truth: `pyproject.toml` defines ALL dependencies
+- Atomic installation: All packages installed in one command
+- Version consistency: Same versions locally and in CI
+- No manual maintenance: Add new deps to pyproject.toml only
+
+**Fix 3: Make matplotlib optional (proper design)**
+
+`model_interpretability.py` provides OPTIONAL interpretability features. All visualization dependencies should be optional:
+
+```diff
+-src/renewable/model_interpretability.py:20-23
+-import matplotlib
+-matplotlib.use('Agg')
+-import matplotlib.pyplot as plt
++src/renewable/model_interpretability.py:14-20
++try:
++    import matplotlib  # noqa: E402
++    matplotlib.use('Agg')  # Non-interactive backend
++    import matplotlib.pyplot as plt  # noqa: E402
++    MATPLOTLIB_AVAILABLE = True
++except ImportError:
++    MATPLOTLIB_AVAILABLE = False
++    logger.warning("matplotlib not installed - visualization features unavailable")
+```
+
+**Guards added to all plotting functions**:
+- `generate_shap_summary_plot()` → checks `MATPLOTLIB_AVAILABLE`
+- `generate_shap_bar_plot()` → checks `MATPLOTLIB_AVAILABLE`
+- `generate_shap_dependence_plot()` → checks `MATPLOTLIB_AVAILABLE`
+- `generate_shap_waterfall()` → checks `MATPLOTLIB_AVAILABLE`
+- `generate_partial_dependence_plot()` → checks `MATPLOTLIB_AVAILABLE`
+
+**Why not defensive coding**: This is proper optional feature design. If matplotlib isn't installed:
+- Module still imports successfully ✅
+- Functions return `False` (already existing pattern for SHAP/sklearn) ✅
+- Logs clear warning about missing capabilities ✅
+- Core forecasting still works ✅
+
+### Key Lessons
+
+**1. .gitignore patterns should be specific**
+- Broad patterns (`interpretability/`) can block legitimate data
+- Be explicit about what should/shouldn't be tracked
+- Document intent in comments
+
+**2. Single source of truth for dependencies**
+- Use `pip install -e .` in CI/CD, not manual package lists
+- Maintains consistency between local dev and CI
+- Eliminates fragile multi-command installs
+
+**3. Optional features need optional imports**
+- If feature is optional, ALL its dependencies should be optional
+- Use try/except with availability flags
+- Guard all usage with availability checks
+- Follow existing patterns in codebase
+
+### Files Changed
+1. `.gitignore` - Specific patterns for interpretability directories
+2. `.github/workflows/renewable-hourly.yml` - Install from pyproject.toml
+3. `src/renewable/model_interpretability.py` - Optional matplotlib import with guards
+4. `DEVLOG.md` - This comprehensive analysis
+
+### Testing
+- ✅ `.gitignore`: `data/renewable/interpretability/` can be committed
+- ✅ `.gitignore`: `scripts/interpretability/` is blocked
+- ✅ Python syntax: `model_interpretability.py` compiles successfully
+- ✅ Import guards: All plotting functions check `MATPLOTLIB_AVAILABLE`
+
+---
+
 ## 2026-01-20: Pre-commit CI Failure - UTF-16 Encoding Issue (Part 2)
 
 ### Problem - Second Occurrence

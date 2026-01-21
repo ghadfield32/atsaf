@@ -8,8 +8,16 @@
 .local/
 .env
 .venv/
+
 # Python bytecode
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# Generated reports and outputs (temporary)
+report.txt
+*_report.txt
+solar_investigation_report*.txt
+interpretability/
+nul

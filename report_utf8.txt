@@ -1,0 +1,25 @@
+﻿================================================================================
+SOLAR DATA QUALITY INVESTIGATION
+================================================================================
+
+Found 3 solar series: ['CALI_SUN', 'ERCO_SUN', 'MISO_SUN']
+
+================================================================================
+SERIES: CALI_SUN
+================================================================================
+
+[CHECK 1] TIMEZONE CONSISTENCY
+  Generation timezone: None
+  Weather timezone: None
+  Forecast timezone: None
+
+[CHECK 2] TIMESTAMP ALIGNMENT
+  Generation rows: 721
+  Weather rows: 782
+  Matched rows: 721 (100.0%)
+
+[CHECK 3] NIGHT-TIME GENERATION (Training Data)
+  Night hours (< 6 or > 18): 331 / 721 rows (45.9%)
+  Mean night generation: 5355.7 MW
+  Max night generation: 14994.0 MW
+  Median night generation: 3277.0 MW

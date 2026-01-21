@@ -13,7 +13,7 @@ Philosophy:
 
 Usage:
     # Review investigation findings first!
-    python scripts/investigate_solar_data_quality.py > report.txt
+    python scripts/investigate_solar_data_quality.py > solar_investigation_report.txt
 
     # Then run corrections
     python scripts/fix_solar_data_issues.py
@@ -25,6 +25,10 @@ Output:
 
 import sys
 from pathlib import Path
+
+# Force UTF-8 encoding for stdout (fixes Windows UTF-16 redirect issue)
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 import pandas as pd
 

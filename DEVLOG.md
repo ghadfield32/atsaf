@@ -1,5 +1,60 @@
 # Development Log
 
+## 2026-01-20: Pre-commit CI Failure - UTF-16 Encoding Issue
+
+### Problem
+CI pre-commit hook failed with:
+```
+fix end of files.........................................................Failed
+- hook id: end-of-file-fixer
+- exit code: 1
+- files were modified by this hook
+Fixing report.txt
+
+Binary files a/report.txt and b/report.txt differ
+```
+
+### Root Cause Analysis
+**File encoding issue**: `report.txt` was generated with UTF-16 encoding instead of UTF-8
+- **Evidence**: `file report.txt` shows "Unicode text, UTF-16, little-endian text"
+- **Impact**: Git treats UTF-16 as binary, pre-commit hooks can't process it properly
+- **Source**: Windows console redirection (`python script.py > report.txt`) defaults to UTF-16
+
+### Investigation Steps
+1. Checked file type: `file report.txt` → UTF-16 LE with CRLF
+2. Examined octal dump: Confirmed UTF-16 BOM (0xFFFE) and 2-byte characters
+3. Traced origin: Output from `investigate_solar_data_quality.py`
+4. Verified git history: File committed in `dc937ee`
+
+### Resolution
+**Fix 1: Add generated files to .gitignore**
+- Added: `report.txt`, `*_report.txt`, `solar_investigation_report*.txt`, `interpretability/`, `nul`
+- Removed from git: `git rm --cached report.txt`
+
+**Fix 2: Force UTF-8 output in scripts**
+- Updated `scripts/investigate_solar_data_quality.py` (lines 23-25)
+- Updated `scripts/fix_solar_data_issues.py` (lines 29-31)
+- Added: `sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')`
+- **Why**: Ensures UTF-8 encoding even on Windows with redirection
+
+**Fix 3: Dashboard timezone display**
+- Updated `src/renewable/dashboard.py` to show local times (CST, PST, etc.) instead of UTC
+- Added timezone conversion: `df["ds"].dt.tz_localize("UTC").dt.tz_convert(timezone_name)`
+- X-axis now labeled "Time (CST)" showing local time for each region
+
+### Testing
+- ✅ Re-run investigation script: Output now UTF-8 encoded
+- ✅ Pre-commit hooks: Should pass on next commit
+- ✅ Dashboard: Shows correct local times (e.g., 8am CST instead of 14:00 UTC)
+
+### Files Changed
+- `.gitignore` - Added generated report patterns
+- `scripts/investigate_solar_data_quality.py` - Force UTF-8 stdout
+- `scripts/fix_solar_data_issues.py` - Force UTF-8 stdout
+- `src/renewable/dashboard.py` - Local timezone display
+
+---
+
 ## 2026-01-19: Negative Solar Generation Investigation (CALI_SUN)
 
 ### Problem

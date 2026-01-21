@@ -23,7 +23,12 @@
       "Bash(C:\\\\Users\\\\ghadf\\\\anaconda3\\\\envs\\\\atsaf\\\\python.exe -m:*)",
       "Bash(/c/Users/ghadf/anaconda3/envs/atsaf/python.exe -m src.renewable.jobs.run_hourly:*)",
       "Bash(C:/Users/ghadf/.local/bin/python.exe:*)",
-      "Bash(C:/Users/ghadf/Anaconda3/python.exe:*)"
+      "Bash(C:/Users/ghadf/Anaconda3/python.exe:*)",
+      "Bash(if [ -f nul ])",
+      "Bash(then git rm --cached nul)",
+      "Bash(else echo \"nul file not tracked\")",
+      "Bash(fi)",
+      "Bash(git add:*)"
     ]
   }
 }

@@ -20,6 +20,10 @@ Output:
 import sys
 from pathlib import Path
 
+# Force UTF-8 encoding for stdout (fixes Windows UTF-16 redirect issue)
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+
 import numpy as np
 import pandas as pd
 

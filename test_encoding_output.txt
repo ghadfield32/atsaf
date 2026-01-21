@@ -1,0 +1,57 @@
+================================================================================
+SOLAR DATA QUALITY INVESTIGATION
+================================================================================
+
+Found 3 solar series: ['CALI_SUN', 'ERCO_SUN', 'MISO_SUN']
+
+================================================================================
+SERIES: CALI_SUN
+================================================================================
+
+[CHECK 1] TIMEZONE CONSISTENCY
+  Generation timezone: None
+  Weather timezone: None
+  Forecast timezone: None
+
+[CHECK 2] TIMESTAMP ALIGNMENT
+  Generation rows: 704
+  Weather rows: 771
+  Matched rows: 704 (100.0%)
+
+[CHECK 3] NIGHT-TIME GENERATION (Training Data)
+  Night hours (< 6 or > 18): 325 / 704 rows (46.2%)
+  Mean night generation: 5294.9 MW
+  Max night generation: 14994.0 MW
+  Median night generation: 3000.0 MW
+  ⚠️ WARNING: High night-time generation detected (max: 14994.0 MW)
+  Sample high night generation:
+                     ds      y  hour
+454 2026-01-09 22:00:00  14994    22
+478 2026-01-10 22:00:00  14783    22
+502 2026-01-11 22:00:00  14736    22
+523 2026-01-12 19:00:00  14626    19
+453 2026-01-09 21:00:00  14564    21
+
+[CHECK 4] SOLAR RADIATION DURING NIGHT HOURS
+  Mean direct radiation at night: 111.8 W/m²
+  Mean diffuse radiation at night: 57.9 W/m²
+  Max direct radiation at night: 438.0 W/m²
+  ⚠️ WARNING: Non-zero radiation at night detected!
+  Sample:
+
+
+=== STDERR ===
+Traceback (most recent call last):
+  File "c:\docker_projects\atsaf\scripts\investigate_solar_data_quality.py", line 191, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "c:\docker_projects\atsaf\scripts\investigate_solar_data_quality.py", line 133, in main
+    night_merged[night_merged["direct_radiation"] > 10][
+  File "C:\Users\ghadf\Anaconda3\Lib\site-packages\pandas\core\frame.py", line 4119, in __getitem__
+    indexer = self.columns._get_indexer_strict(key, "columns")[1]
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ghadf\Anaconda3\Lib\site-packages\pandas\core\indexes\base.py", line 6212, in _get_indexer_strict
+    self._raise_if_missing(keyarr, indexer, axis_name)
+  File "C:\Users\ghadf\Anaconda3\Lib\site-packages\pandas\core\indexes\base.py", line 6264, in _raise_if_missing
+    raise KeyError(f"{not_found} not in index")
+KeyError: "['hour'] not in index"

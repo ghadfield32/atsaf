@@ -1,5 +1,78 @@
 # Development Log
 
+## 2026-01-22: Pipeline Integration Fixes - API Mismatch Resolution
+
+### Problem - tasks.py Using Outdated API Signatures
+
+**Symptom**: Pipeline would crash with TypeError on API calls after dataset_builder integration
+
+**Root Cause**: After refactoring to use `dataset_builder.py` for preprocessing, `tasks.py` was still calling the old API:
+- `model.cross_validate(df, weather_df)` - weather_df parameter removed
+- `model.fit(df, weather_df)` - weather_df parameter removed
+- `model.predict(future_weather)` - changed to `predict(future_exog)`
+- `train_renewable_models(generation_df, weather_df)` - should take preprocessed modeling_df
+
+**Design Principle**: Dataset builder does ALL preprocessing (weather merge, time features, negative handling). Modeling receives clean, ready-to-use data.
+
+### Resolution
+
+**Fix 1: Updated train_renewable_models() - src/renewable/tasks.py:379-441**
+```python
+# BEFORE (BROKEN):
+def train_renewable_models(config, generation_df, weather_df):
+    cv_results, leaderboard = model.cross_validate(
+        df=generation_df,
+        weather_df=weather_df,  # ❌ Doesn't exist
+    )
+
+# AFTER (CORRECT):
+def train_renewable_models(config, modeling_df):
+    cv_results, leaderboard = model.cross_validate(
+        df=modeling_df,  # ✅ Already preprocessed
+    )
+```
+
+**Fix 2: Updated generate_renewable_forecasts() - src/renewable/tasks.py:557-703**
+```python
+# BEFORE (BROKEN):
+model.fit(generation_df, weather_df)  # ❌ Two arguments
+forecasts = model.predict(future_weather=future_weather)  # ❌ Wrong param
+
+# AFTER (CORRECT):
+model.fit(modeling_df)  # ✅ One argument
+# Build future_exog with time features + weather
+future_exog = ... # Proper construction
+forecasts = model.predict(future_exog=future_exog)  # ✅ Correct param
+```
+
+**Fix 3: Updated run_full_pipeline() - src/renewable/tasks.py:738-797**
+- Added policy mapping: `{"clamp": "clamp_to_zero", "fail_loud": "investigate"}`
+- Fixed PreprocessingReport attribute access: `prep_report.input_rows` not `rows_input`
+- Correct call: `train_renewable_models(config, modeling_df)` not `(config, modeling_df, weather_df)`
+
+**Fix 4: Added numpy import - src/renewable/tasks.py:19**
+- Required for cyclical time feature encoding in `generate_renewable_forecasts()`
+
+### Pre-commit Hook - Trailing Whitespace Cleanup
+
+**Problem**: Pre-commit hook `trailing-whitespace` rejecting commits due to whitespace on 6 lines in eda.py
+
+**Lines Fixed**: 283, 322, 520, 532, 533, 580, 621
+
+**Resolution**: Removed trailing spaces after commas in matplotlib plotting calls
+
+### Validation
+- ✅ All modules compile: `python -m py_compile src/renewable/*.py`
+- ✅ No trailing whitespace: `src/renewable/*.py`
+- ✅ API signatures match between tasks.py and modeling.py
+- ✅ PreprocessingReport attributes correctly accessed
+
+### Files Changed
+- `src/renewable/tasks.py` - Fixed 8 API mismatches, added numpy import, improved error handling
+- `src/renewable/eda.py` - Removed trailing whitespace from 6 lines
+
+---
+
 ## 2026-01-22: Timezone Misalignment (Root Cause of Solar Forecast Spikes) + EIA Retry Logic
 
 ### Problem - Critical Timezone Bug Causing Nighttime Solar Generation
@@ -1092,3 +1165,12 @@ Always verify naming conventions with downstream consumers before implementing c
 | 2026-01-19 | renewable_hourly.yml | Added quality gate step |
 | 2026-01-19 | pre-commit.yml | Added pytest smoke test step |
 | 2026-01-19 | test_smoke.py | Created mocked smoke tests |
+| 2026-01-22 | tasks.py | Fixed API mismatch: train_renewable_models() now takes modeling_df instead of (generation_df, weather_df) |
+| 2026-01-22 | tasks.py | Fixed API mismatch: generate_renewable_forecasts() calls model.fit(df) not model.fit(df, weather_df) |
+| 2026-01-22 | tasks.py | Fixed API mismatch: model.cross_validate() no longer takes weather_df parameter |
+| 2026-01-22 | tasks.py | Fixed API mismatch: model.predict() takes future_exog not future_weather |
+| 2026-01-22 | tasks.py | Added policy mapping: config.negative_policy → dataset_builder negative_policy |
+| 2026-01-22 | tasks.py | Fixed PreprocessingReport attribute access: input_rows, output_rows, negative_report.action_taken |
+| 2026-01-22 | tasks.py | Added numpy import for time feature calculations in generate_renewable_forecasts() |
+| 2026-01-22 | tasks.py | generate_renewable_forecasts() now builds future_exog with time features and weather |
+| 2026-01-22 | eda.py | Fixed trailing whitespace on lines 283, 322, 520, 532, 533, 580, 621 (pre-commit hook) |

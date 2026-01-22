@@ -280,7 +280,7 @@ class NegativeValueInvestigation:
         ax = axes[0, 0]
         neg_values = neg_df['y'].values
         ax.hist(neg_values, bins=50, color='red', alpha=0.7, edgecolor='black')
-        ax.axvline(x=np.median(neg_values), color='blue', linestyle='--', 
+        ax.axvline(x=np.median(neg_values), color='blue', linestyle='--',
                    label=f'Median: {np.median(neg_values):.1f}')
         ax.set_xlabel('Generation (MWh)')
         ax.set_ylabel('Frequency')
@@ -319,7 +319,7 @@ class NegativeValueInvestigation:
             series_df = self.df[self.df['unique_id'] == first_series].sort_values('ds')
             ax.plot(series_df['ds'], series_df['y'], 'b-', alpha=0.5, label='Generation')
             neg_mask = series_df['y'] < 0
-            ax.scatter(series_df.loc[neg_mask, 'ds'], series_df.loc[neg_mask, 'y'], 
+            ax.scatter(series_df.loc[neg_mask, 'ds'], series_df.loc[neg_mask, 'y'],
                       c='red', s=20, label='Negative values', zorder=5)
             ax.axhline(y=0, color='black', linestyle='--', linewidth=0.5)
             ax.set_xlabel('Date')
@@ -517,7 +517,7 @@ def _analyze_seasonality(df: pd.DataFrame, output_dir: Path) -> Dict[str, Any]:
         results['hourly_patterns'][uid] = hourly_profile.to_dict(orient='records')
 
     # Create visualization
-    fig, axes = plt.subplots(1, len(results['series_analyzed']), 
+    fig, axes = plt.subplots(1, len(results['series_analyzed']),
                             figsize=(5 * len(results['series_analyzed']), 4))
     if len(results['series_analyzed']) == 1:
         axes = [axes]
@@ -529,8 +529,8 @@ def _analyze_seasonality(df: pd.DataFrame, output_dir: Path) -> Dict[str, Any]:
         hourly_std = series_data.groupby('hour')['y'].std()
 
         axes[idx].plot(hourly_mean.index, hourly_mean.values, marker='o')
-        axes[idx].fill_between(hourly_mean.index, 
-                               hourly_mean - hourly_std, 
+        axes[idx].fill_between(hourly_mean.index,
+                               hourly_mean - hourly_std,
                                hourly_mean + hourly_std, alpha=0.3)
         axes[idx].set_xlabel('Hour of Day')
         axes[idx].set_ylabel('Generation (MWh)')
@@ -577,7 +577,7 @@ def _analyze_zero_inflation(df: pd.DataFrame, output_dir: Path) -> Dict[str, Any
         solar_zero_by_hour = solar_df.groupby('hour').apply(
             lambda x: (x['y'] == 0).mean()
         )
-        axes[0].bar(solar_zero_by_hour.index, solar_zero_by_hour.values, 
+        axes[0].bar(solar_zero_by_hour.index, solar_zero_by_hour.values,
                    color='orange', alpha=0.7)
         axes[0].set_xlabel('Hour of Day')
         axes[0].set_ylabel('Zero Ratio')
@@ -618,7 +618,7 @@ def _analyze_weather_alignment(
 
     merged = generation_df.merge(weather_df, on=['ds', 'region'], how='left')
 
-    weather_vars = [c for c in weather_df.columns 
+    weather_vars = [c for c in weather_df.columns
                    if c not in ['ds', 'region'] and c in merged.columns]
 
     results = {

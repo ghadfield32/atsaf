@@ -32,7 +32,6 @@ except ImportError:
 from src.renewable.eia_renewable import EIARenewableFetcher
 from src.renewable.modeling import (
     RenewableForecastModel,
-    _add_time_features,
     compute_baseline_metrics,
     WEATHER_VARS,
 )
@@ -41,7 +40,7 @@ from src.renewable.model_interpretability import (
     generate_full_interpretability_report,
 )
 from src.renewable.open_meteo import OpenMeteoRenewable
-from src.renewable.dataset_builder import build_modeling_dataset
+from src.renewable.dataset_builder import _add_time_features, build_modeling_dataset
 
 logger = logging.getLogger(__name__)
 

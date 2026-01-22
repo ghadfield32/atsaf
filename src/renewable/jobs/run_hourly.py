@@ -47,7 +47,52 @@ def _expected_series(regions: list[str], fuel_types: list[str]) -> list[str]:
     return [f"{region}_{fuel}" for region in regions for fuel in fuel_types]
 
 
+def _sanitize_for_json(obj):
+    """
+    Recursively sanitize data structure for JSON serialization.
+
+    Replaces NaN/Infinity values with None to ensure valid JSON compliance.
+    Python's json.dumps() by default writes NaN/Infinity as JavaScript literals,
+    which are NOT valid JSON per RFC 8259.
+
+    Args:
+        obj: Any Python object (dict, list, primitive, etc.)
+
+    Returns:
+        Sanitized copy with NaN/Infinity replaced by None
+    """
+    import math
+
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_for_json(item) for item in obj]
+    elif isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    elif hasattr(obj, "item"):  # numpy scalar
+        try:
+            extracted = obj.item()
+            if isinstance(extracted, float) and (math.isnan(extracted) or math.isinf(extracted)):
+                return None
+            return extracted
+        except Exception:
+            return obj
+    else:
+        return obj
+
+
 def _json_default(value: object) -> str:
+    """
+    JSON serializer for objects not serializable by default json module.
+
+    Handles:
+    - pd.Timestamp/datetime → ISO format strings
+    - Other types → string representation
+
+    Note: NaN/Infinity are handled by _sanitize_for_json() before serialization.
+    """
     if isinstance(value, pd.Timestamp):
         return value.isoformat()
     if isinstance(value, datetime):
@@ -313,8 +358,12 @@ def run_hourly_pipeline() -> dict:
     }
 
     Path(data_dir).mkdir(parents=True, exist_ok=True)
+    # Sanitize data to replace NaN/Infinity with None (valid JSON)
+    # NaN/Infinity are not valid JSON per RFC 8259
+    sanitized_log = _sanitize_for_json(run_log)
+    # Use allow_nan=False to catch any NaN that slipped through
     (Path(data_dir) / "run_log.json").write_text(
-        json.dumps(run_log, indent=2, default=_json_default)
+        json.dumps(sanitized_log, indent=2, default=_json_default, allow_nan=False)
     )
 
     # Check validation

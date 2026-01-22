@@ -509,8 +509,8 @@ if __name__ == "__main__":
     f = EIARenewableFetcher()
     df = f.fetch_region("CALI", "SUN", "2024-12-01", "2024-12-03", debug=True)
     print(df.head(), len(df))
-    
-    
+
+
     # Real API smoke test (no key needed)
     weather = OpenMeteoRenewable(strict=True)
 

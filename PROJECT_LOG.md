@@ -1,5 +1,106 @@
 # ATSAF Project Log
 
+## 2026-01-22: JSON Corruption Bug Fix & Pre-commit Hook Resolution
+
+### Issues Addressed
+1. **Pre-commit Hook**: Trailing whitespace auto-fix exit code 1 in CI (expected behavior, not a bug)
+2. **Critical Bug**: JSONDecodeError when loading run_log.json - malformed JSON with Git merge conflicts
+3. **Data Quality Bug**: NaN values written to JSON as invalid `NaN` literal instead of `null`
+
+### Root Cause Analysis
+
+#### Issue #1: Pre-commit Hook "Failure"
+- **File**: pyproject.toml:65, modeling.py:512-513
+- **Symptom**: CI shows "Error: Process completed with exit code 1" after pre-commit hook
+- **Root Cause**: This is NOT a bug - exit code 1 signals files were modified by hooks
+- **Expected Behavior**: Developer reviews auto-fixed files and commits them
+- **Action**: No code changes needed - working as designed
+
+#### Issue #2: Git Merge Conflicts in JSON File (CRITICAL)
+- **File**: data/renewable/run_log.json
+- **Symptom**: `JSONDecodeError: Expecting property name enclosed in double quotes: line 2 column 1 (char 2)`
+- **Root Cause**: Commit ff9d3bd merged two branches but left unresolved conflict markers in JSON file
+- **Impact**: Dashboard crashes on load at dashboard.py:1184 when calling `json.load()`
+- **Conflicts Found**: 4 conflict sections (lines 2-6, 28-37, 60-74, 80-108)
+  - `run_at_utc` timestamp conflict (HEAD: 21:10:55 vs MERGE: 21:53:07)
+  - `weather_rows` and `eda` section conflict
+  - `best_rmse` and `baseline` metrics conflict
+  - `leaderboard` model results conflict
+
+#### Issue #3: Invalid NaN in JSON (DATA QUALITY)
+- **File**: data/renewable/run_log.json:139
+- **Symptom**: `"coverage_95": NaN` in JSON file
+- **Root Cause**: modeling.py:141-149 `compute_coverage()` returns `np.nan` when no valid data
+  - "index" baseline model has no prediction intervals → returns `np.nan`
+  - Python's `json.dumps()` has `allow_nan=True` by default → writes `NaN` literal
+  - `NaN` is valid JavaScript but INVALID JSON per RFC 8259
+- **Impact**: JSON file is technically malformed and fails strict parsers
+- **Code Path**:
+  ```
+  compute_coverage() → np.nan → leaderboard dict →
+  json.dumps(allow_nan=True) → "coverage_95": NaN →
+  json.load() → JSONDecodeError
+  ```
+
+### Changes Made
+
+#### Fix #1: Resolve JSON Merge Conflicts
+- **Script**: scratchpad/fix_json.py (temporary debugging tool)
+- **Action**: Resolved 4 merge conflicts by keeping newer version (2026-01-22T21:53:07 run)
+- **Action**: Replaced 2 instances of `NaN` with `null`
+- **Verification**: JSON now loads correctly with 6 root keys, 6 models in leaderboard
+
+#### Fix #2: Prevent Future NaN Corruption
+- **run_hourly.py:50-78** - Added `_sanitize_for_json()` function
+  - Recursively walks data structures (dict, list, primitives)
+  - Replaces `NaN`/`Infinity`/`-Infinity` with `null` before JSON serialization
+  - Handles both Python floats and numpy scalars
+  - **Rationale**: `json.dumps()` checks NaN before calling `default` function, so must pre-process
+- **run_hourly.py:81-97** - Updated `_json_default()` function
+  - Simplified to handle only type conversions (Timestamp → ISO, numpy → Python)
+  - Removed NaN handling (now in `_sanitize_for_json()`)
+  - Added comprehensive docstrings explaining RFC 8259 compliance
+- **run_hourly.py:344-350** - Updated JSON write call
+  - Added `sanitized_log = _sanitize_for_json(run_log)` before `json.dumps()`
+  - Added `allow_nan=False` to catch any NaN that slips through
+  - Added comment explaining NaN is not valid JSON per RFC 8259
+
+#### Testing
+- **scratchpad/test_json_fix.py** - Created comprehensive test suite
+  - Test numpy NaN → null conversion
+  - Test Python float NaN → null conversion
+  - Test Infinity/-Infinity → null conversion
+  - Test normal floats preserved
+  - Test pandas Timestamp → ISO string
+  - Test nested structures with NaN
+  - Test JSON validity and parseability
+  - **Result**: All 8 tests pass
+
+### Verification Steps
+1. ✅ Fixed JSON file loads without errors: `json.load(open('data/renewable/run_log.json'))`
+2. ✅ Dashboard starts without crashes (run_log.json parsed successfully)
+3. ✅ Test suite passes for NaN sanitization (8/8 tests)
+4. ✅ Updated code verified: `_sanitize_for_json()` and `_json_default()` import correctly
+5. ✅ Smoke test: NaN in dict → `{"test": null, "value": 42}` (valid JSON)
+
+### Impact
+- **Before**: Dashboard crashes on startup with JSONDecodeError
+- **After**: Dashboard loads successfully, displays model metrics correctly
+- **Prevention**: Future pipeline runs will never write invalid NaN/Infinity to JSON
+- **Data Quality**: All numeric metrics now properly serialize as `null` when undefined
+
+### Files Modified
+- ✅ data/renewable/run_log.json - Resolved conflicts, replaced NaN with null
+- ✅ src/renewable/jobs/run_hourly.py - Added `_sanitize_for_json()`, updated JSON serialization
+
+### Next Steps
+- Monitor next pipeline run to confirm NaN handling works in production
+- Consider adding JSON schema validation in CI to catch malformed JSON early
+- Add Git hook to prevent committing files with conflict markers
+- Document JSON serialization standards in developer guide
+
+---
+
 ## 2026-01-22: FutureWarning Fixes & Configuration Cleanup
 
 ### Issues Addressed

@@ -137,6 +137,31 @@ graph TB
 
 ---
 
+## Model Selection Rationale (Data-Scientist View)
+
+**Goal:** A repeatable, evidence-driven selection process, not a one-off favorite.
+
+### Why each model is in the leaderboard
+- **MSTL_ARIMA**: Best when data has *multiple seasonalities* (daily + weekly). It decomposes trend/seasonality before ARIMA, which matches hourly grid patterns in energy data.
+- **AutoARIMA**: Strong general-purpose baseline that adapts (p,d,q) automatically; good when seasonality is present but less complex.
+- **AutoETS**: Works well on smoother series with stable trend/seasonality; faster, interpretable, and competitive when variance is lower.
+- **AutoTheta**: Robust to level shifts and outliers; valuable when generation regimes change or weather drives abrupt shifts.
+- **SeasonalNaive**: A strict baseline (same hour last week). If a model can’t beat this, it’s not adding value.
+
+### How the winner is chosen (objective rule)
+1. **Primary metric = RMSE** from time-series cross-validation (rolling windows).
+2. **Secondary check = Coverage**: 80% and 95% intervals should be close to nominal.
+3. **Baseline check**: Winner must beat SeasonalNaive meaningfully.
+4. **Operational check**: Forecasts and intervals must remain **non-negative**.
+
+### How to report “best model” in the post
+- Pull `best_model` and `best_rmse` from `data/renewable/run_log.json` (dashboard uses this).
+- Example phrasing:
+  - “**Best model for this run: {best_model}** (lowest RMSE on CV, good interval coverage).”
+  - “**Why it won:** {brief reason tied to seasonality/variance or stability}.”
+
+---
+
 ## Dashboard Highlights (from `src/renewable/dashboard.py`)
 
 - **Forecasts Tab**: Interactive 24h forecasts with 80%/95% intervals and local time display.
@@ -148,7 +173,7 @@ graph TB
 
 ---
 
-## LinkedIn Post Template (Updated)
+## LinkedIn Post Template (Updated, Long-Form)
 
 ```
 Built a production ML pipeline for renewable energy forecasting.
@@ -156,7 +181,49 @@ Built a production ML pipeline for renewable energy forecasting.
 The challenge: Predict 24–72 hours of wind & solar generation across major US regions
 using only public grid + weather data — and make it production-grade.
 
-7 engineering choices that made it work:
+What started as “make a forecast” quickly became “make it reliable when the data is imperfect.”
+Here’s the build flow and the main problems I solved.
+
+Data ingestion (generation + weather)
+I pull hourly generation from the EIA API and weather from Open-Meteo. Weather is pulled two ways
+on purpose: historical for training, forecast for prediction, so evaluation stays honest.
+
+Problem 1: Negative generation values
+I expected wind and solar to be non-negative, but raw data includes negatives. Instead of silently
+cleaning, I ran EDA first to measure how often it happens, where it happens, and how it affects
+downstream modeling. That produces a logged preprocessing policy that the dataset builder applies
+consistently.
+
+Problem 2: Missing hours and irregular grids
+Time-series models assume a complete hourly grid. Gaps break seasonality learning and CV.
+I chose not to impute because that manufactures signal. Series that exceed missingness thresholds
+are dropped, and the remaining data is enforced onto a complete hourly index.
+
+Problem 3: Regions publish on different lags
+Not every region updates at the same time. A global “latest timestamp” makes some series invalid.
+I fixed this by aligning forecast start times using the most conservative common cutoff across
+series so every region’s forecast is anchored to valid data.
+
+Modeling and selection
+I trained multiple StatsForecast models under cross-validation and stored a leaderboard for
+comparison. The goal was not a single favorite model, but a repeatable selection process that
+can be rerun as new data arrives.
+
+Final issue: Negative forecasts from statistical models
+Even after cleaning, statistical models can output negatives due to error assumptions. Since
+power generation cannot be negative, I enforce a non-negative constraint on point forecasts and
+prediction intervals so the system never publishes physically impossible values.
+
+Production checks and monitoring
+Quality gates and drift monitoring keep it reliable: rowdrop checks for API issues, negative
+forecast ratio checks, and performance drift alerts relative to CV baselines.
+
+If you have feedback on the dashboard or what you’d want in a production readiness checklist
+for time-series forecasting, I’d love to hear it.
+
+Stack: Python, EIA API, Open-Meteo, StatsForecast, Streamlit, LightGBM + SHAP
+
+7 engineering choices that made it work (short list):
 
 1) Physical constraints
 Energy can't be negative. Forecasts + intervals are clipped to >= 0 in both CV and production.

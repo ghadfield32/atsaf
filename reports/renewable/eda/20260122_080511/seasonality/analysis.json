@@ -1,0 +1,14 @@
+{
+  "series_analyzed": [
+    "CALI_SUN",
+    "CALI_WND",
+    "ERCO_SUN"
+  ],
+  "hourly_seasonality_strength": {
+    "CALI_SUN": 0.971032372432645,
+    "CALI_WND": 0.019860799682122836,
+    "ERCO_SUN": 0.9356254192722008
+  },
+  "daily_seasonality_strength": {},
+  "weekly_seasonality_strength": {}
+}

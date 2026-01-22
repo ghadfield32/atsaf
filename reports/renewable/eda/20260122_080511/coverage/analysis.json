@@ -1,0 +1,53 @@
+{
+  "series_coverage": {
+    "CALI_SUN": {
+      "expected_hours": 368,
+      "actual_hours": 368,
+      "missing_hours": 0,
+      "coverage_ratio": 1.0,
+      "n_missing_blocks": 0,
+      "largest_block_hours": 0
+    },
+    "CALI_WND": {
+      "expected_hours": 368,
+      "actual_hours": 368,
+      "missing_hours": 0,
+      "coverage_ratio": 1.0,
+      "n_missing_blocks": 0,
+      "largest_block_hours": 0
+    },
+    "ERCO_SUN": {
+      "expected_hours": 366,
+      "actual_hours": 366,
+      "missing_hours": 0,
+      "coverage_ratio": 1.0,
+      "n_missing_blocks": 0,
+      "largest_block_hours": 0
+    },
+    "ERCO_WND": {
+      "expected_hours": 366,
+      "actual_hours": 366,
+      "missing_hours": 0,
+      "coverage_ratio": 1.0,
+      "n_missing_blocks": 0,
+      "largest_block_hours": 0
+    },
+    "MISO_SUN": {
+      "expected_hours": 365,
+      "actual_hours": 365,
+      "missing_hours": 0,
+      "coverage_ratio": 1.0,
+      "n_missing_blocks": 0,
+      "largest_block_hours": 0
+    },
+    "MISO_WND": {
+      "expected_hours": 365,
+      "actual_hours": 365,
+      "missing_hours": 0,
+      "coverage_ratio": 1.0,
+      "n_missing_blocks": 0,
+      "largest_block_hours": 0
+    }
+  },
+  "missing_hour_patterns": {}
+}

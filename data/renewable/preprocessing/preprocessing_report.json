@@ -1,119 +1,57 @@
 {
-  "series_processed": 6,
-  "rows_input": 2198,
-  "rows_output": 2198,
-  "negative_values_found": {
-    "CALI_SUN": {
-      "count": 213,
-      "ratio": 0.5788043478260869,
-      "min_value": -58.0,
-      "max_value": -5.0,
-      "mean_value": -44.64319248826291,
-      "sample_timestamps": [
-        "2026-01-07 02:00:00",
-        "2026-01-07 03:00:00",
-        "2026-01-07 04:00:00",
-        "2026-01-07 05:00:00",
-        "2026-01-07 06:00:00",
-        "2026-01-07 07:00:00",
-        "2026-01-07 08:00:00",
-        "2026-01-07 09:00:00",
-        "2026-01-07 10:00:00",
-        "2026-01-07 11:00:00"
-      ]
-    }
+  "timestamp": "2026-01-22T09:40:15.820242",
+  "input_rows": 2198,
+  "input_series": 6,
+  "input_date_range": {
+    "start": "2026-01-07 00:00:00",
+    "end": "2026-01-22 07:00:00"
   },
-  "negative_values_action": "clamped",
-  "series_dropped_incomplete": [],
-  "missing_hour_summary": {
-    "series_count": 6,
-    "series_with_missing": 0,
-    "total_missing_hours": 0,
-    "worst_missing_ratio": 0.0,
-    "policy": "drop_incomplete_series",
-    "series_dropped": [],
-    "missing_hour_blocks": [
+  "negative_report": {
+    "total_negative_count": 213,
+    "total_rows": 2198,
+    "negative_ratio": 0.09690627843494086,
+    "by_series": {
+      "CALI_SUN": {
+        "count": 213,
+        "ratio": 0.5788043478260869,
+        "min_value": -58.0,
+        "max_value": -5.0,
+        "mean_value": -44.64319248826291
+      }
+    },
+    "action_taken": "clamped_to_zero",
+    "samples": [
       {
         "unique_id": "CALI_SUN",
-        "start": "2026-01-07 00:00:00",
-        "end": "2026-01-22 07:00:00",
-        "expected_hours": 368,
-        "actual_hours": 368,
-        "missing_hours": 0,
-        "missing_ratio": 0.0,
-        "n_missing_blocks": 0,
-        "largest_missing_block_hours": 0
+        "ds": "2026-01-07 02:00:00",
+        "y": -43.0
       },
       {
-        "unique_id": "CALI_WND",
-        "start": "2026-01-07 00:00:00",
-        "end": "2026-01-22 07:00:00",
-        "expected_hours": 368,
-        "actual_hours": 368,
-        "missing_hours": 0,
-        "missing_ratio": 0.0,
-        "n_missing_blocks": 0,
-        "largest_missing_block_hours": 0
+        "unique_id": "CALI_SUN",
+        "ds": "2026-01-07 03:00:00",
+        "y": -53.0
       },
       {
-        "unique_id": "ERCO_SUN",
-        "start": "2026-01-07 00:00:00",
-        "end": "2026-01-22 05:00:00",
-        "expected_hours": 366,
-        "actual_hours": 366,
-        "missing_hours": 0,
-        "missing_ratio": 0.0,
-        "n_missing_blocks": 0,
-        "largest_missing_block_hours": 0
+        "unique_id": "CALI_SUN",
+        "ds": "2026-01-07 04:00:00",
+        "y": -52.0
       },
       {
-        "unique_id": "ERCO_WND",
-        "start": "2026-01-07 00:00:00",
-        "end": "2026-01-22 05:00:00",
-        "expected_hours": 366,
-        "actual_hours": 366,
-        "missing_hours": 0,
-        "missing_ratio": 0.0,
-        "n_missing_blocks": 0,
-        "largest_missing_block_hours": 0
+        "unique_id": "CALI_SUN",
+        "ds": "2026-01-07 05:00:00",
+        "y": -53.0
       },
       {
-        "unique_id": "MISO_SUN",
-        "start": "2026-01-07 00:00:00",
-        "end": "2026-01-22 04:00:00",
-        "expected_hours": 365,
-        "actual_hours": 365,
-        "missing_hours": 0,
-        "missing_ratio": 0.0,
-        "n_missing_blocks": 0,
-        "largest_missing_block_hours": 0
-      },
-      {
-        "unique_id": "MISO_WND",
-        "start": "2026-01-07 00:00:00",
-        "end": "2026-01-22 04:00:00",
-        "expected_hours": 365,
-        "actual_hours": 365,
-        "missing_hours": 0,
-        "missing_ratio": 0.0,
-        "n_missing_blocks": 0,
-        "largest_missing_block_hours": 0
+        "unique_id": "CALI_SUN",
+        "ds": "2026-01-07 06:00:00",
+        "y": -52.0
       }
     ]
   },
-  "weather_coverage_by_region": {
-    "CALI": 1.0,
-    "ERCO": 1.0,
-    "MISO": 1.0
-  },
-  "weather_alignment_failures": [],
-  "time_features_added": [
-    "hour_sin",
-    "hour_cos",
-    "dow_sin",
-    "dow_cos"
-  ],
-  "weather_features_added": [
+  "missing_hours_dropped": 0,
+  "series_dropped_incomplete": [],
+  "weather_coverage": 1.0,
+  "weather_vars_used": [
     "temperature_2m",
     "wind_speed_10m",
     "wind_speed_100m",
@@ -122,5 +60,26 @@
     "diffuse_radiation",
     "cloud_cover"
   ],
-  "timestamp": "2026-01-22T07:43:50.148290"
+  "output_rows": 2198,
+  "output_series": 6,
+  "output_features": [
+    "unique_id",
+    "ds",
+    "y",
+    "hour_sin",
+    "hour_cos",
+    "dow_sin",
+    "dow_cos",
+    "temperature_2m",
+    "wind_speed_10m",
+    "wind_speed_100m",
+    "wind_direction_10m",
+    "direct_radiation",
+    "diffuse_radiation",
+    "cloud_cover"
+  ],
+  "config": {
+    "negative_policy": "clamp_to_zero",
+    "max_missing_ratio": 0.02
+  }
 }

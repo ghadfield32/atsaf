@@ -11,12 +11,12 @@ Idempotent tasks for:
 
 import argparse
 import logging
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 from src.renewable.eia_renewable import EIARenewableFetcher
@@ -33,8 +33,7 @@ from src.renewable.model_interpretability import (
     generate_full_interpretability_report,
 )
 from src.renewable.open_meteo import OpenMeteoRenewable
-from src.renewable.regions import REGIONS, list_regions
-from src.renewable.dataset_builder import build_modeling_dataset, PreprocessingReport
+from src.renewable.dataset_builder import build_modeling_dataset
 
 logger = logging.getLogger(__name__)
 
@@ -378,26 +377,32 @@ def fetch_renewable_weather(
 
 def train_renewable_models(
     config: RenewablePipelineConfig,
-    generation_df: Optional[pd.DataFrame] = None,
-    weather_df: Optional[pd.DataFrame] = None,
+    modeling_df: Optional[pd.DataFrame] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Task 3: Train models and compute baseline metrics via cross-validation.
 
     Args:
         config: Pipeline configuration
-        generation_df: Generation data (loads from file if None)
-        weather_df: Weather data (loads from file if None)
+        modeling_df: Preprocessed modeling dataset from build_modeling_dataset()
+                     (loads and builds from scratch if None)
 
     Returns:
         Tuple of (cv_results, leaderboard, baseline_metrics)
     """
-    # Load data if not provided
-    if generation_df is None:
+    # Load and preprocess data if not provided
+    if modeling_df is None:
         generation_df = pd.read_parquet(config.generation_path())
-    if weather_df is None:
         weather_df = pd.read_parquet(config.weather_path())
 
-    logger.info(f"[train_models] Training on {len(generation_df)} rows")
+        logger.info("[train_models] Building modeling dataset...")
+        modeling_df, _ = build_modeling_dataset(
+            generation_df,
+            weather_df,
+            negative_policy='clamp_to_zero',
+            output_dir=config.preprocessing_dir()
+        )
+
+    logger.info(f"[train_models] Training on {len(modeling_df)} rows")
 
     model = RenewableForecastModel(
         horizon=config.horizon,
@@ -405,7 +410,7 @@ def train_renewable_models(
     )
 
     # Compute adaptive CV settings based on shortest series
-    min_series_len = generation_df.groupby("unique_id").size().min()
+    min_series_len = modeling_df.groupby("unique_id").size().min()
 
     # CV needs: horizon + (n_windows * step_size) rows minimum
     # Solve for n_windows: n_windows = (min_series_len - horizon) / step_size
@@ -420,17 +425,15 @@ def train_renewable_models(
         f"step={step_size}h (min_series={min_series_len} rows)"
     )
 
-    # Cross-validation
+    # Cross-validation (modeling_df already has weather merged and time features added)
     cv_results, leaderboard = model.cross_validate(
-        df=generation_df,
-        weather_df=weather_df,
+        df=modeling_df,
         n_windows=n_windows,
         step_size=step_size,
     )
 
     best_model = leaderboard.iloc[0]["model"]
     baseline = compute_baseline_metrics(cv_results, model_name=best_model)
-
 
     logger.info(f"[train_models] Best model: {best_model}, RMSE: {baseline['rmse_mean']:.1f}")
 
@@ -556,24 +559,49 @@ def train_interpretability_models(
 
 def generate_renewable_forecasts(
     config: RenewablePipelineConfig,
-    generation_df: Optional[pd.DataFrame] = None,
+    modeling_df: Optional[pd.DataFrame] = None,
     weather_df: Optional[pd.DataFrame] = None,
     best_model: str = "MSTL_ARIMA",
 ) -> pd.DataFrame:
-    """Task 4: Generate forecasts with prediction intervals."""
+    """Task 4: Generate forecasts with prediction intervals.
+
+    Args:
+        config: Pipeline configuration
+        modeling_df: Preprocessed modeling dataset (if None, loads and builds)
+        weather_df: Raw weather data with forecast (if None, loads from file)
+        best_model: Model to use for forecasting
+
+    Returns:
+        Forecast DataFrame with physical constraints applied
+    """
     output_path = config.forecasts_path()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if generation_df is None:
+    # Load and preprocess data if not provided
+    if modeling_df is None:
         generation_df = pd.read_parquet(config.generation_path())
+        if weather_df is None:
+            weather_df = pd.read_parquet(config.weather_path())
+
+        logger.info("[generate_forecasts] Building modeling dataset...")
+        modeling_df, _ = build_modeling_dataset(
+            generation_df,
+            weather_df,
+            negative_policy='clamp_to_zero',
+            output_dir=config.preprocessing_dir()
+        )
+
     if weather_df is None:
         weather_df = pd.read_parquet(config.weather_path())
 
-    logger.info(f"[generate_forecasts] Generating {config.horizon}h forecasts using model={best_model}")
+    logger.info(
+        f"[generate_forecasts] Generating {config.horizon}h forecasts "
+        f"using model={best_model}"
+    )
 
     # Ensure datetime types
-    generation_df = generation_df.copy()
-    generation_df["ds"] = pd.to_datetime(generation_df["ds"], errors="raise")
+    modeling_df = modeling_df.copy()
+    modeling_df["ds"] = pd.to_datetime(modeling_df["ds"], errors="raise")
     weather_df = weather_df.copy()
     weather_df["ds"] = pd.to_datetime(weather_df["ds"], errors="raise")
 
@@ -582,16 +610,19 @@ def generate_renewable_forecasts(
         confidence_levels=config.confidence_levels,
     )
 
-    # Fit uses only historical generation timestamps, weather merge will fail-loud if missing.
-    model.fit(generation_df, weather_df)
+    # Fit on preprocessed modeling data
+    model.fit(modeling_df)
 
-    # Future weather must cover the horizon after the EARLIEST series' last timestamp
-    # (different regions may have different publishing lags)
-    per_series_max = generation_df.groupby("unique_id")["ds"].max()
-    logger.info(f"[generate_forecasts] Per-series max timestamps:\n{per_series_max.to_dict()}")
+    # Prepare future exogenous features for forecasting
+    # We need weather + time features for the forecast horizon
+    per_series_max = modeling_df.groupby("unique_id")["ds"].max()
+    logger.info(
+        f"[generate_forecasts] Per-series max timestamps:\n"
+        f"{per_series_max.to_dict()}"
+    )
 
     min_of_max = per_series_max.min()
-    global_max = generation_df["ds"].max()
+    global_max = modeling_df["ds"].max()
 
     logger.info(
         f"[generate_forecasts] Min of series maxes: {min_of_max}, "
@@ -599,19 +630,68 @@ def generate_renewable_forecasts(
         f"Delta: {(global_max - min_of_max).total_seconds() / 3600:.1f}h"
     )
 
-    # Use min of max timestamps to ensure all series have weather for their forecasts
+    # Get future weather beyond the last training timestamp
     future_weather = weather_df[weather_df["ds"] > min_of_max].copy()
 
     if future_weather.empty:
         raise RuntimeError(
-            "[generate_forecasts] No future weather rows found after earliest series max. "
-            f"min_of_max={min_of_max}"
+            "[generate_forecasts] No future weather found after last "
+            f"training timestamp. min_of_max={min_of_max}"
         )
 
-    # Generate forecasts using best model from CV
-    # The predict() method now supports best_model parameter to filter output
-    logger.info(f"[generate_forecasts] Generating predictions using model: {best_model}")
-    forecasts = model.predict(future_weather=future_weather, best_model=best_model)
+    # Build future_exog by preparing timestamps and merging weather
+    unique_ids = modeling_df["unique_id"].unique()
+    future_timestamps = pd.date_range(
+        start=min_of_max + pd.Timedelta(hours=1),
+        periods=config.horizon,
+        freq="h"
+    )
+
+    # Create future_exog with all series x timestamps combinations
+    future_exog = pd.DataFrame([
+        {"unique_id": uid, "ds": ts}
+        for uid in unique_ids
+        for ts in future_timestamps
+    ])
+
+    # Add region for weather merge
+    future_exog["region"] = future_exog["unique_id"].str.split("_").str[0]
+
+    # Merge weather
+    available_weather_vars = [
+        c for c in WEATHER_VARS if c in future_weather.columns
+    ]
+    future_exog = future_exog.merge(
+        future_weather[["ds", "region"] + available_weather_vars],
+        on=["ds", "region"],
+        how="left"
+    )
+
+    # Check for missing weather
+    missing_weather = future_exog[available_weather_vars].isna().any(axis=1)
+    if missing_weather.any():
+        missing_count = missing_weather.sum()
+        logger.warning(
+            f"[generate_forecasts] {missing_count} future rows missing "
+            f"weather, dropping them"
+        )
+        future_exog = future_exog[~missing_weather].reset_index(drop=True)
+
+    # Add time features (same as dataset_builder)
+    future_exog["hour"] = future_exog["ds"].dt.hour
+    future_exog["dow"] = future_exog["ds"].dt.dayofweek
+    future_exog["hour_sin"] = np.sin(2 * np.pi * future_exog["hour"] / 24)
+    future_exog["hour_cos"] = np.cos(2 * np.pi * future_exog["hour"] / 24)
+    future_exog["dow_sin"] = np.sin(2 * np.pi * future_exog["dow"] / 7)
+    future_exog["dow_cos"] = np.cos(2 * np.pi * future_exog["dow"] / 7)
+    future_exog = future_exog.drop(columns=["hour", "dow", "region"])
+
+    # Generate forecasts
+    logger.info(
+        f"[generate_forecasts] Generating predictions using "
+        f"model: {best_model}"
+    )
+    forecasts = model.predict(future_exog=future_exog, best_model=best_model)
 
     logger.info(
         f"[generate_forecasts] Generated {len(forecasts)} forecast rows "
@@ -619,10 +699,11 @@ def generate_renewable_forecasts(
     )
 
     forecasts.to_parquet(output_path, index=False)
-    logger.info(f"[generate_forecasts] Saved: {output_path} ({len(forecasts)} rows)")
+    logger.info(
+        f"[generate_forecasts] Saved: {output_path} ({len(forecasts)} rows)"
+    )
 
     return forecasts
-
 
 
 def compute_renewable_drift(
@@ -737,27 +818,51 @@ def run_full_pipeline(
 
     # Step 2.5: Build modeling-ready dataset with preprocessing
     logger.info("[pipeline] Building modeling dataset (dataset_builder.py)")
+
+    # Map config policy to dataset_builder policy
+    policy_map = {
+        "clamp": "clamp_to_zero",
+        "fail_loud": "investigate",
+        "hybrid": "clamp_to_zero",
+    }
+    negative_policy = policy_map.get(
+        config.negative_policy, "clamp_to_zero"
+    )
+
     modeling_df, prep_report = build_modeling_dataset(
         generation_df,
         weather_df,
-        negative_policy=config.negative_policy,
-        hourly_grid_policy=config.hourly_grid_policy,
+        negative_policy=negative_policy,
+        max_missing_ratio=0.02,
         output_dir=config.preprocessing_dir()
     )
 
+    # Extract time and weather features from output_features
+    time_features = [
+        f for f in prep_report.output_features
+        if f in ['hour_sin', 'hour_cos', 'dow_sin', 'dow_cos']
+    ]
+    weather_features = [
+        f for f in prep_report.output_features
+        if f in prep_report.weather_vars_used
+    ]
+
     results["preprocessing"] = {
-        "rows_input": prep_report.rows_input,
-        "rows_output": prep_report.rows_output,
+        "rows_input": prep_report.input_rows,
+        "rows_output": prep_report.output_rows,
         "series_dropped": len(prep_report.series_dropped_incomplete),
-        "negative_action": prep_report.negative_values_action,
-        "time_features": prep_report.time_features_added,
-        "weather_features": prep_report.weather_features_added,
+        "negative_action": prep_report.negative_report.action_taken,
+        "time_features": time_features,
+        "weather_features": weather_features,
     }
-    logger.info(f"[pipeline] Preprocessing: {prep_report.rows_input:,} → {prep_report.rows_output:,} rows")
+    logger.info(
+        f"[pipeline] Preprocessing: {prep_report.input_rows:,} → "
+        f"{prep_report.output_rows:,} rows"
+    )
 
     # Step 3: Train and validate (on preprocessed data)
     cv_results, leaderboard, baseline = train_renewable_models(
-        config, modeling_df, weather_df=None  # Weather already merged by dataset_builder
+        config, modeling_df
     )
     best_model = leaderboard.iloc[0]["model"]
     results["best_model"] = best_model
@@ -767,8 +872,9 @@ def run_full_pipeline(
     results["leaderboard"] = leaderboard.to_dict(orient="records")
 
     # Step 4: Generate forecasts (use the best model from CV)
+    # Pass weather_df for future weather (forecast horizon)
     forecasts = generate_renewable_forecasts(
-        config, modeling_df, weather_df=None, best_model=best_model
+        config, modeling_df, weather_df, best_model=best_model
     )
     results["forecast_rows"] = len(forecasts)
 

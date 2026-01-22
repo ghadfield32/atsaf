@@ -1,0 +1,28 @@
+{
+  "merge_success_ratio": 1.0,
+  "weather_coverage_by_region": {
+    "CALI": 1.0,
+    "ERCO": 1.0,
+    "MISO": 1.0
+  },
+  "correlation_by_fuel": {
+    "WND": {
+      "temperature_2m": -0.31870924950775265,
+      "wind_speed_10m": 0.8522067520654817,
+      "wind_speed_100m": 0.9022345434399783,
+      "wind_direction_10m": 0.42924079690096584,
+      "direct_radiation": -0.04410451054715643,
+      "diffuse_radiation": -0.05463750825464244,
+      "cloud_cover": 0.0628379238960259
+    },
+    "SUN": {
+      "temperature_2m": 0.3781953197032733,
+      "wind_speed_10m": 0.08944162677599372,
+      "wind_speed_100m": -0.07657485257025608,
+      "wind_direction_10m": 0.07482845566962658,
+      "direct_radiation": 0.8565447127045903,
+      "diffuse_radiation": 0.774060349009887,
+      "cloud_cover": -0.059545928822196066
+    }
+  }
+}

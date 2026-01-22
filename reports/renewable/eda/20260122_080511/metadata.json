@@ -1,0 +1,17 @@
+{
+  "timestamp": "20260122_080511",
+  "generation_rows": 2198,
+  "generation_series": 6,
+  "date_range": {
+    "start": "2026-01-07 00:00:00",
+    "end": "2026-01-22 07:00:00"
+  },
+  "weather_rows": 1263,
+  "analyses_completed": [
+    "seasonality",
+    "zero_inflation",
+    "coverage_gaps",
+    "negative_values",
+    "weather_alignment"
+  ]
+}

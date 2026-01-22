@@ -166,6 +166,117 @@ forecasts = model.predict(future_exog=future_exog)  # ✅ Correct param
 
 ---
 
+## 2026-01-22: ImportError Fix - RenewableLGBMForecaster Class Not Found
+
+### Problem - Module Import Failing in GitHub Actions
+
+**Symptom**: GitHub Actions hourly job failing with ImportError during module load
+```
+ImportError: cannot import name 'RenewableLGBMForecaster' from 'src.renewable.modeling'
+File: /home/runner/work/atsaf/atsaf/src/renewable/tasks.py, line 25
+```
+
+**Root Cause**: `tasks.py` was importing `RenewableLGBMForecaster` class that was never created
+
+**Analysis**:
+- Class used in `train_interpretability_models()` function (line 525)
+- Function is optional (only runs if `config.enable_interpretability=True`)
+- The class was supposed to wrap skforecast's `ForecasterRecursive` with LightGBM
+- However, this wrapper class was never implemented
+
+### Resolution
+
+**Fix 1: Removed broken import - src/renewable/tasks.py:23-30**
+```python
+# BEFORE (BROKEN):
+from src.renewable.modeling import (
+    RenewableForecastModel,
+    RenewableLGBMForecaster,  # ❌ Class doesn't exist
+    _log_series_summary,
+    ...
+)
+
+# AFTER (FIXED):
+from src.renewable.modeling import (
+    RenewableForecastModel,
+    _log_series_summary,  # ✅ Removed non-existent import
+    ...
+)
+```
+
+**Fix 2: Added optional imports for interpretability - src/renewable/tasks.py:12-20**
+```python
+# Optional imports for interpretability (LightGBM + skforecast)
+try:
+    from lightgbm import LGBMRegressor
+    from skforecast.recursive import ForecasterRecursive
+    INTERPRETABILITY_AVAILABLE = True
+except ImportError:
+    INTERPRETABILITY_AVAILABLE = False
+    logger.warning("lightgbm and/or skforecast not installed - interpretability features unavailable")
+```
+
+**Fix 3: Updated train_interpretability_models() to use skforecast directly - src/renewable/tasks.py:535-558**
+```python
+# BEFORE (BROKEN):
+lgbm = RenewableLGBMForecaster(  # ❌ Class doesn't exist
+    horizon=config.horizon,
+    lags=168,
+    rolling_window_sizes=[24, 168],
+)
+lgbm.fit(y=y, exog=exog)
+report = generate_full_interpretability_report(
+    forecaster=lgbm.forecaster,  # ❌ Wrong attribute
+    ...
+)
+
+# AFTER (FIXED):
+if not INTERPRETABILITY_AVAILABLE:
+    logger.warning(f"lightgbm/skforecast not available, skipping {uid}")
+    continue
+
+# Create skforecast ForecasterRecursive with LightGBM estimator
+forecaster = ForecasterRecursive(
+    estimator=LGBMRegressor(
+        random_state=42,
+        verbose=-1,
+        n_estimators=100,
+        learning_rate=0.05,
+        max_depth=6,
+    ),
+    lags=168,  # 7 days of lags
+)
+forecaster.fit(y=y, exog=exog)
+report = generate_full_interpretability_report(
+    forecaster=forecaster,  # ✅ Correct
+    ...
+)
+```
+
+**Why This Works**:
+- Uses skforecast's standard `ForecasterRecursive` API (same as `model_interpretability.py` test code)
+- Gracefully handles missing dependencies (interpretability is optional)
+- No need for custom wrapper class - skforecast provides everything needed
+- `generate_full_interpretability_report()` already designed to work with any skforecast forecaster
+
+### Validation
+```bash
+✓ python -m py_compile src/renewable/tasks.py           # Syntax valid
+✓ pre-commit run --all-files                            # All 7 hooks passed
+✓ python -m py_compile src/renewable/*.py               # All modules compile
+```
+
+### Files Changed
+- `src/renewable/tasks.py` - Removed broken import, added optional imports, updated `train_interpretability_models()`
+
+### Design Principles Applied
+1. **Optional Dependencies**: Graceful degradation when lightgbm/skforecast unavailable
+2. **Use Standard APIs**: Prefer skforecast's `ForecasterRecursive` over custom wrappers
+3. **Non-Fatal Failures**: Interpretability is optional, pipeline continues if unavailable
+4. **Follow Existing Patterns**: Matches test code in `model_interpretability.py`
+
+---
+
 ## 2026-01-22: Timezone Misalignment (Root Cause of Solar Forecast Spikes) + EIA Retry Logic
 
 ### Problem - Critical Timezone Bug Causing Nighttime Solar Generation

@@ -21,16 +21,13 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit_mermaid as stmd
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.renewable.db import (
-    connect,
-    get_drift_alerts,
-    get_recent_forecasts,
-    init_renewable_db,
-)
+from src.renewable.db import (connect, get_drift_alerts, get_recent_forecasts,
+                              init_renewable_db)
 from src.renewable.regions import FUEL_TYPES, REGIONS
 
 # Page config
@@ -87,8 +84,9 @@ def main():
         if st.button("📊 Run Pipeline", width="stretch"):
             run_pipeline_from_dashboard(db_path, selected_regions, fuel_type)
 
-    # Main content tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    # Main content tabs  (Data & Insights first)
+    tab_insights, tab_forecasts, tab_drift, tab_coverage, tab_weather, tab_interp = st.tabs([
+        "📚 Data & Insights",
         "📈 Forecasts",
         "⚠️ Drift Monitor",
         "📊 Coverage",
@@ -96,20 +94,24 @@ def main():
         "🔍 Interpretability",
     ])
 
-    with tab1:
+    with tab_insights:
+        render_insights_tab(db_path)
+
+    with tab_forecasts:
         render_forecasts_tab(db_path, selected_regions, fuel_type, show_debug=show_debug)
 
-    with tab2:
+    with tab_drift:
         render_drift_tab(db_path)
 
-    with tab3:
+    with tab_coverage:
         render_coverage_tab(db_path)
 
-    with tab4:
+    with tab_weather:
         render_weather_tab(db_path, selected_regions)
 
-    with tab5:
+    with tab_interp:
         render_interpretability_tab(selected_regions, fuel_type)
+
 
 
 def render_forecasts_tab(db_path: str, regions: list, fuel_type: str, *, show_debug: bool = False):
@@ -898,14 +900,1195 @@ def generate_demo_forecasts(regions: list, fuel_type: str) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
+def render_insights_tab(db_path: str):
+    """Render comprehensive data insights including regional context and EDA results."""
+    st.title("📚 Data & Insights")
+    st.markdown("**Understanding the data, regions, and methodology behind renewable energy forecasting**")
+
+    # ========================================================================
+    # Section 1: Pipeline Architecture
+    # ========================================================================
+    st.header("⚙️ Pipeline Architecture")
+    st.markdown("""
+This forecasting system follows a rigorous pipeline from data ingestion through model validation:
+    """)
+
+    # Mermaid diagram from README
+    code = r"""
+    graph TB
+        A[EIA API<br/>Generation Data] -->|fetch_renewable_data| B[generation.parquet<br/>unique_id, ds, y]
+        C[Open-Meteo API<br/>Weather Data] -->|fetch_renewable_weather| D[weather.parquet<br/>ds, region, weather_vars]
+
+        B --> E[EDA Module<br/>Investigation & Recommendations]
+        D --> E
+
+        E -->|Recommendations| F[Dataset Builder<br/>Fuel-Specific Preprocessing]
+
+        F -->|Validated Dataset| G[StatsForecast CV<br/>MSTL, AutoARIMA, AutoETS]
+        F -->|Optional| H[LightGBM SHAP<br/>Interpretability]
+
+        G --> I[Best Model Selection<br/>Leaderboard]
+        I --> J[Generate Forecasts<br/>24h + Intervals]
+
+        J --> K[forecasts.parquet<br/>yhat, yhat_lo, yhat_hi]
+        J --> L[Quality Gates<br/>Drift Detection]
+
+        L -->|Pass| M[Git Commit<br/>Artifact Versioning]
+        L -->|Fail| N[Pipeline Fails<br/>Manual Review]
+
+        H --> O[SHAP Reports<br/>Feature Importance]
+
+        style E fill:#e1f5ff
+        style F fill:#fff4e1
+        style G fill:#f0e1ff
+        style L fill:#ffe1e1
+    """
+
+    stmd.st_mermaid(code)
+
+    # ========================================================================
+    # Section 2: Regional Electricity Markets
+    # ========================================================================
+    st.header("🌍 Regional Electricity Markets")
+    st.markdown("""
+The United States electricity grid is managed by multiple **Independent System Operators (ISOs)**
+and **Regional Transmission Organizations (RTOs)**. This dashboard focuses on three major regions:
+    """)
+
+    # Create tabs for each region
+    region_tab1, region_tab2, region_tab3, region_tab4 = st.tabs([
+        "🏢 ERCOT (Texas)",
+        "🌾 MISO (Midwest)",
+        "☀️ CAISO (California)",
+        "📊 Comparison"
+    ])
+
+    with region_tab1:
+        st.subheader("ERCOT - Electric Reliability Council of Texas")
+
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            st.markdown("""
+**Geographic Coverage:**
+- **Texas** (90% of the state)
+- Does NOT include El Paso, parts of East Texas, or the Panhandle
+
+**Key Characteristics:**
+- ⚡ **Population**: ~27 million people
+- 🏢 **Unique Feature**: Operates **independently** from the rest of the US grid
+- 🔌 **Interconnection**: Texas Interconnection (isolated from Eastern and Western grids)
+- 🌞 **Renewables**: High solar and wind capacity (~35% of generation)
+- 🌡️ **Climate**: Hot summers → high cooling demand
+- 💡 **Market**: Deregulated electricity market (competitive pricing)
+
+**Why It's Different:**
+- Not subject to federal regulation (doesn't cross state borders)
+- Cannot easily import/export power from other states
+- Famous for the 2021 winter storm crisis
+- **EIA Code**: `TEX` (Texas)
+            """)
+
+        with col2:
+            st.info("""
+**Grid Challenge**
+
+ERCOT's isolation means
+it cannot import power
+during emergencies.
+
+**Forecasting Impact**
+
+Solar & wind forecasting
+is critical - no backup
+from neighboring grids.
+            """)
+
+    with region_tab2:
+        st.subheader("MISO - Midcontinent Independent System Operator")
+
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            st.markdown("""
+**Geographic Coverage:**
+- **15 states** across North-Central US:
+  - **North**: North Dakota, South Dakota, Minnesota, Wisconsin, Michigan
+  - **Central**: Iowa, Illinois, Indiana, Missouri
+  - **South**: Arkansas, Louisiana, Mississippi, Texas (parts)
+
+**Key Characteristics:**
+- ⚡ **Population**: ~45 million people
+- 🌾 **Characteristics**: Large agricultural region, diverse fuel mix
+- 💨 **Renewables**: Massive wind capacity (especially in the Great Plains)
+- 🏭 **Industry**: Heavy manufacturing (automotive, steel)
+- 🌡️ **Climate**: Four distinct seasons, cold winters, hot summers
+- 💡 **Market**: Day-ahead and real-time energy markets
+
+**Why It's Interesting:**
+- One of the largest ISOs in North America
+- Leading in wind energy integration
+- Diverse geography (from Great Lakes to Gulf Coast)
+- **EIA Code**: `MISO` (Midcontinent ISO)
+            """)
+
+        with col2:
+            st.info("""
+**Grid Challenge**
+
+Vast geography creates
+transmission challenges
+and regional variations.
+
+**Forecasting Impact**
+
+Wind forecasting most
+critical due to Great
+Plains wind belt.
+            """)
+
+    with region_tab3:
+        st.subheader("CAISO - California Independent System Operator")
+
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            st.markdown("""
+**Geographic Coverage:**
+- **California** (80% of the state)
+- Small parts of Nevada
+
+**Key Characteristics:**
+- ⚡ **Population**: ~30 million people
+- 🌞 **Renewables**: Aggressive renewable energy targets (60% by 2030, 100% by 2045)
+- 🔋 **Innovation**: Leader in battery storage, rooftop solar
+- 🌡️ **Climate**: Mediterranean (hot, dry summers; mild winters)
+- 🔥 **Challenges**: Wildfires, drought, "duck curve" problem
+- 💡 **Market**: Complex wholesale electricity market
+
+**Why It's Unique:**
+- **Most aggressive renewable targets** in the US
+- **Duck curve problem**: Solar floods grid during day, steep ramp-up needed at sunset
+- **Net metering**: Rooftops can sell back to grid
+- High electricity prices (climate policies, infrastructure costs)
+- **EIA Code**: `CAL` (California)
+            """)
+
+        with col2:
+            st.warning("""
+**Grid Challenge**
+
+"Duck Curve" problem:
+- Midday: Too much solar
+- Evening: Sharp ramp-up
+
+**Forecasting Impact**
+
+Solar forecasting MOST
+critical (50%+ renewable
+target). Need accurate
+sunset timing predictions.
+            """)
+
+    with region_tab4:
+        st.subheader("Regional Comparison")
+
+        # Comparison table
+        comparison_data = {
+            "Characteristic": [
+                "States Covered",
+                "Population",
+                "Grid Connection",
+                "Renewable %",
+                "Primary Challenge",
+                "Peak Demand Season",
+                "Unique Feature",
+                "Solar Capacity",
+                "Wind Capacity",
+            ],
+            "ERCOT (ERCO)": [
+                "Texas",
+                "27M",
+                "Isolated (Texas only)",
+                "~35% (wind, solar)",
+                "Grid isolation, heat waves",
+                "Summer (cooling)",
+                "No federal oversight",
+                "Growing fast",
+                "Very high",
+            ],
+            "MISO": [
+                "15 states",
+                "45M",
+                "Eastern Interconnection",
+                "~25% (mostly wind)",
+                "Winter cold, wind variability",
+                "Summer/Winter",
+                "Largest ISO",
+                "Moderate",
+                "Very high (Great Plains)",
+            ],
+            "CAISO (CALI)": [
+                "California",
+                "30M",
+                "Western Interconnection",
+                "~50% (solar, wind, hydro)",
+                "Duck curve, wildfires",
+                "Summer (cooling)",
+                "Most aggressive renewables",
+                "Highest in US",
+                "Moderate",
+            ],
+        }
+
+        st.dataframe(
+            comparison_data,
+            width="stretch",
+            hide_index=True,
+        )
+
+        st.markdown("""
+### 🎯 Forecasting Implications by Region
+
+**Solar Forecasting Priority:**
+1. 🥇 **CAISO**: Most important (50%+ renewable target, duck curve management)
+2. 🥈 **ERCOT**: Growing importance (rapid solar buildout)
+3. 🥉 **MISO**: Less critical (wind-focused region)
+
+**Wind Forecasting Priority:**
+1. 🥇 **MISO**: Most critical (Great Plains wind belt, 15-state coverage)
+2. 🥈 **ERCOT**: Very important (West Texas wind resources)
+3. 🥉 **CAISO**: Moderate importance (some Tehachapi wind)
+
+**Data Quality Observations:**
+- **CALI_SUN**: 403 negative values found (likely net metering, auxiliary loads)
+- **Other regions**: Clean data (no negative values detected)
+        """)
+
+    # ========================================================================
+    # Section 3: Model Performance Dashboard (NEW)
+    # ========================================================================
+    st.header("🎯 Model Performance Dashboard")
+    st.markdown("""
+This section shows the latest model performance metrics from cross-validation and
+compares different forecasting models to select the best performer.
+    """)
+
+    # Load run_log.json for model performance
+    data_dir = Path(db_path).parent
+    run_log_path = data_dir / "run_log.json"
+
+    if run_log_path.exists():
+        import json
+        with open(run_log_path, 'r') as f:
+            run_log = json.load(f)
+
+        pipeline_results = run_log.get('pipeline_results', {})
+
+        # Display key metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            best_model = pipeline_results.get('best_model', 'N/A')
+            st.metric("🏆 Best Model", best_model)
+        with col2:
+            best_rmse = pipeline_results.get('best_rmse', 0)
+            st.metric("📊 Best RMSE", f"{best_rmse:,.0f}")
+        with col3:
+            series_count = pipeline_results.get('series_count', 0)
+            st.metric("📈 Series Forecasted", series_count)
+        with col4:
+            rows_out = pipeline_results.get('preprocessing', {}).get('rows_output', 0)
+            st.metric("📋 Training Rows", f"{rows_out:,}")
+
+        # Model Leaderboard - Interactive Table
+        st.subheader("📊 Model Leaderboard (Cross-Validation Results)")
+
+        leaderboard = pipeline_results.get('leaderboard', [])
+        if leaderboard:
+            import pandas as pd
+            lb_df = pd.DataFrame(leaderboard)
+
+            # Format for display
+            if 'coverage_80' in lb_df.columns:
+                lb_df['coverage_80'] = lb_df['coverage_80'].apply(lambda x: f"{x*100:.1f}%")
+            if 'coverage_95' in lb_df.columns:
+                lb_df['coverage_95'] = lb_df['coverage_95'].apply(lambda x: f"{x*100:.1f}%")
+            if 'rmse' in lb_df.columns:
+                lb_df['rmse'] = lb_df['rmse'].apply(lambda x: f"{x:,.0f}")
+            if 'mae' in lb_df.columns:
+                lb_df['mae'] = lb_df['mae'].apply(lambda x: f"{x:,.0f}")
+
+            st.dataframe(
+                lb_df,
+                width="stretch",
+                hide_index=True,
+            )
+
+            # Interactive Model Comparison Chart
+            st.subheader("📈 Model Comparison (RMSE & MAE)")
+
+            # Reload raw data for plotting
+            lb_df_raw = pd.DataFrame(leaderboard)
+
+            import plotly.graph_objects as go
+            fig = go.Figure()
+
+            # RMSE bars
+            fig.add_trace(go.Bar(
+                name='RMSE',
+                x=lb_df_raw['model'],
+                y=lb_df_raw['rmse'],
+                marker_color='indianred',
+                text=[f"{v:,.0f}" for v in lb_df_raw['rmse']],
+                textposition='outside'
+            ))
+
+            # MAE bars
+            fig.add_trace(go.Bar(
+                name='MAE',
+                x=lb_df_raw['model'],
+                y=lb_df_raw['mae'],
+                marker_color='lightseagreen',
+                text=[f"{v:,.0f}" for v in lb_df_raw['mae']],
+                textposition='outside'
+            ))
+
+            fig.update_layout(
+                title="Model Performance: Lower is Better",
+                xaxis_title="Model",
+                yaxis_title="Error Metric (MWh)",
+                barmode='group',
+                height=400,
+                hovermode='x unified',
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1
+                )
+            )
+
+            st.plotly_chart(fig, width="stretch")
+
+            # Coverage Analysis
+            st.subheader("🎯 Prediction Interval Coverage")
+            st.markdown("""
+**Coverage** measures how often actual values fall within prediction intervals:
+- **80% Interval**: Should contain ~80% of actuals
+- **95% Interval**: Should contain ~95% of actuals
+            """)
+
+            fig_coverage = go.Figure()
+
+            fig_coverage.add_trace(go.Bar(
+                name='80% Coverage',
+                x=lb_df_raw['model'],
+                y=lb_df_raw['coverage_80'] * 100,
+                marker_color='skyblue',
+                text=[f"{v*100:.1f}%" for v in lb_df_raw['coverage_80']],
+                textposition='outside'
+            ))
+
+            fig_coverage.add_trace(go.Bar(
+                name='95% Coverage',
+                x=lb_df_raw['model'],
+                y=lb_df_raw['coverage_95'] * 100,
+                marker_color='navy',
+                text=[f"{v*100:.1f}%" for v in lb_df_raw['coverage_95']],
+                textposition='outside'
+            ))
+
+            # Add target lines
+            fig_coverage.add_hline(y=80, line_dash="dash", line_color="gray", annotation_text="80% Target")
+            fig_coverage.add_hline(y=95, line_dash="dash", line_color="red", annotation_text="95% Target")
+
+            fig_coverage.update_layout(
+                title="Prediction Interval Coverage by Model",
+                xaxis_title="Model",
+                yaxis_title="Coverage (%)",
+                barmode='group',
+                height=400,
+                yaxis_range=[0, 100]
+            )
+
+            st.plotly_chart(fig_coverage, width="stretch")
+
+        else:
+            st.warning("No leaderboard data available in run log")
+    else:
+        st.warning("No run log found. Run the pipeline to generate performance metrics.")
+
+    # ========================================================================
+    # Section 4: Forecast Accuracy by Region (NEW)
+    # ========================================================================
+    st.header("🌎 Forecast Accuracy by Region")
+    st.markdown("""
+Analyzing forecast performance across different regions helps identify where
+the models perform best and where improvements are needed.
+    """)
+
+    # Load forecasts and generation data
+    forecasts_path = data_dir / "forecasts.parquet"
+    generation_path = data_dir / "generation.parquet"
+
+    if forecasts_path.exists() and generation_path.exists():
+        import numpy as np
+        import pandas as pd
+
+        forecasts_df = pd.read_parquet(forecasts_path)
+        generation_df = pd.read_parquet(generation_path)
+
+        # Ensure datetime
+        forecasts_df['ds'] = pd.to_datetime(forecasts_df['ds'])
+        generation_df['ds'] = pd.to_datetime(generation_df['ds'])
+
+        # Merge forecasts with actuals
+        merged = forecasts_df.merge(
+            generation_df[['unique_id', 'ds', 'y']],
+            on=['unique_id', 'ds'],
+            how='inner'
+        )
+
+        if not merged.empty:
+            # Extract region from unique_id
+            merged['region'] = merged['unique_id'].str.extract(r'(CALI|ERCO|MISO)')[0]
+            merged['fuel'] = merged['unique_id'].str.extract(r'(WND|SUN)')[0]
+
+            # Calculate errors
+            merged['error'] = merged['yhat'] - merged['y']
+            merged['abs_error'] = np.abs(merged['error'])
+            merged['sq_error'] = merged['error'] ** 2
+
+            # Aggregate by region
+            regional_metrics = merged.groupby('region').agg({
+                'abs_error': 'mean',
+                'sq_error': lambda x: np.sqrt(x.mean()),
+                'error': ['mean', 'std'],
+                'unique_id': 'count'
+            }).round(2)
+
+            regional_metrics.columns = ['MAE', 'RMSE', 'Bias', 'Error_Std', 'Count']
+            regional_metrics = regional_metrics.reset_index()
+
+            # Display metrics table
+            st.subheader("📊 Regional Performance Metrics")
+
+            col1, col2 = st.columns([2, 1])
+
+            with col1:
+                st.dataframe(
+                    regional_metrics.style.format({
+                        'MAE': '{:.0f}',
+                        'RMSE': '{:.0f}',
+                        'Bias': '{:.0f}',
+                        'Error_Std': '{:.0f}',
+                        'Count': '{:.0f}'
+                    }),
+                    width="stretch",
+                    hide_index=True,
+                )
+
+            with col2:
+                st.info("""
+**Metrics Explained**
+
+**MAE**: Mean Absolute Error
+Lower = more accurate
+
+**RMSE**: Root Mean Squared Error
+Penalizes large errors
+
+**Bias**: Average error
+(+ = overforecast, - = underforecast)
+                """)
+
+            # Interactive regional comparison
+            st.subheader("📍 Regional Accuracy Comparison")
+
+            fig_regional = go.Figure()
+
+            fig_regional.add_trace(go.Bar(
+                name='MAE',
+                x=regional_metrics['region'],
+                y=regional_metrics['MAE'],
+                marker_color='indianred',
+                text=[f"{v:.0f}" for v in regional_metrics['MAE']],
+                textposition='outside'
+            ))
+
+            fig_regional.add_trace(go.Bar(
+                name='RMSE',
+                x=regional_metrics['region'],
+                y=regional_metrics['RMSE'],
+                marker_color='lightseagreen',
+                text=[f"{v:.0f}" for v in regional_metrics['RMSE']],
+                textposition='outside'
+            ))
+
+            fig_regional.update_layout(
+                title="Forecast Accuracy by Region (Lower is Better)",
+                xaxis_title="Region",
+                yaxis_title="Error (MWh)",
+                barmode='group',
+                height=400
+            )
+
+            st.plotly_chart(fig_regional, width="stretch")
+
+            # Error distribution by region
+            st.subheader("📉 Error Distribution by Region")
+
+            fig_dist = go.Figure()
+
+            for region in merged['region'].unique():
+                region_data = merged[merged['region'] == region]
+                fig_dist.add_trace(go.Box(
+                    y=region_data['error'],
+                    name=region,
+                    boxmean='sd'
+                ))
+
+            fig_dist.add_hline(y=0, line_dash="dash", line_color="black", annotation_text="Perfect Forecast")
+
+            fig_dist.update_layout(
+                title="Forecast Error Distribution by Region",
+                yaxis_title="Error (MWh) [Forecast - Actual]",
+                height=400,
+                showlegend=True
+            )
+
+            st.plotly_chart(fig_dist, width="stretch")
+
+            # Fuel type breakdown
+            st.subheader("⚡ Accuracy by Fuel Type")
+
+            fuel_metrics = merged.groupby(['region', 'fuel']).agg({
+                'abs_error': 'mean',
+                'sq_error': lambda x: np.sqrt(x.mean()),
+            }).round(2).reset_index()
+            fuel_metrics.columns = ['Region', 'Fuel', 'MAE', 'RMSE']
+
+            # Create pivot for heatmap
+            pivot_mae = fuel_metrics.pivot(index='Fuel', columns='Region', values='MAE')
+
+            fig_heatmap = go.Figure(data=go.Heatmap(
+                z=pivot_mae.values,
+                x=pivot_mae.columns,
+                y=pivot_mae.index,
+                colorscale='RdYlGn_r',
+                text=pivot_mae.values,
+                texttemplate='%{text:.0f}',
+                textfont={"size": 14},
+                colorbar=dict(title="MAE (MWh)")
+            ))
+
+            fig_heatmap.update_layout(
+                title="Mean Absolute Error by Region and Fuel Type",
+                xaxis_title="Region",
+                yaxis_title="Fuel Type",
+                height=300
+            )
+
+            st.plotly_chart(fig_heatmap, width="stretch")
+
+        else:
+            st.warning("No matching forecast-actual pairs found for analysis")
+    else:
+        st.warning("Forecast or generation data not available for accuracy analysis")
+
+    # ========================================================================
+    # Section 5: Data Quality & EDA History (NEW)
+    # ========================================================================
+    st.header("📊 Data Quality & EDA History")
+    st.markdown("""
+Track data quality metrics over time and access historical EDA runs.
+    """)
+
+    # List all EDA runs
+    eda_dir = data_dir / "eda"
+
+    if eda_dir.exists():
+        eda_runs = sorted([d for d in eda_dir.iterdir() if d.is_dir()], reverse=True)
+
+        if eda_runs:
+            st.subheader("📅 EDA Run History")
+
+            # Create table of EDA runs
+            eda_history = []
+            for eda_run in eda_runs:
+                recs_file = eda_run / "recommendations.json"
+                if recs_file.exists():
+                    with open(recs_file, 'r') as f:
+                        recs = json.load(f)
+
+                    preprocessing = recs.get('preprocessing', {})
+                    eda_history.append({
+                        'Timestamp': eda_run.name,
+                        'Policy': preprocessing.get('negative_policy', 'N/A'),
+                        'Confidence': preprocessing.get('negative_confidence', 'N/A'),
+                        'Negatives Found': preprocessing.get('data_summary', {}).get('negative_count', 0),
+                        'Affected Series': len(preprocessing.get('data_summary', {}).get('affected_series', [])),
+                        'Path': str(eda_run)
+                    })
+
+            if eda_history:
+                eda_df = pd.DataFrame(eda_history)
+
+                # Display with download link
+                col1, col2 = st.columns([3, 1])
+
+                with col1:
+                    st.dataframe(
+                        eda_df[['Timestamp', 'Policy', 'Confidence', 'Negatives Found', 'Affected Series']],
+                        width="stretch",
+                        hide_index=True,
+                    )
+
+                with col2:
+                    st.info(f"""
+**Total EDA Runs**
+{len(eda_runs)}
+
+**Latest Run**
+{eda_runs[0].name}
+                    """)
+
+                # Data quality trend
+                if len(eda_history) > 1:
+                    st.subheader("📈 Data Quality Trend")
+
+                    fig_quality = go.Figure()
+
+                    fig_quality.add_trace(go.Scatter(
+                        x=eda_df['Timestamp'],
+                        y=eda_df['Negatives Found'],
+                        mode='lines+markers',
+                        name='Negative Values',
+                        line=dict(color='red', width=2),
+                        marker=dict(size=8)
+                    ))
+
+                    fig_quality.update_layout(
+                        title="Negative Values Over Time",
+                        xaxis_title="EDA Run Timestamp",
+                        yaxis_title="Count of Negative Values",
+                        height=350,
+                        hovermode='x unified'
+                    )
+
+                    st.plotly_chart(fig_quality, width="stretch")
+
+                # Allow selection of specific EDA run
+                st.subheader("🔍 View Specific EDA Run")
+
+                selected_run = st.selectbox(
+                    "Select an EDA run to view details:",
+                    options=[r.name for r in eda_runs],
+                    index=0
+                )
+
+                if selected_run:
+                    selected_path = data_dir / "eda" / selected_run
+                    recs_file = selected_path / "recommendations.json"
+
+                    if recs_file.exists():
+                        with open(recs_file, 'r') as f:
+                            selected_recs = json.load(f)
+
+                        with st.expander(f"📄 EDA Results for {selected_run}", expanded=False):
+                            st.json(selected_recs)
+
+                            # Links to visualization files
+                            st.markdown("**Download Visualizations:**")
+                            viz_files = list(selected_path.rglob("*.png"))
+                            if viz_files:
+                                for viz_file in viz_files:
+                                    rel_path = viz_file.relative_to(selected_path)
+                                    st.markdown(f"- `{rel_path}`")
+                            else:
+                                st.info("No visualizations found for this run")
+
+            else:
+                st.info("No EDA recommendations found in run history")
+        else:
+            st.info("No EDA runs found")
+    else:
+        st.warning("EDA directory not found")
+
+    # ========================================================================
+    # Section 6: Exploratory Data Analysis (Enhanced with Plotly)
+    # ========================================================================
+    st.header("🔬 Exploratory Data Analysis")
+    st.markdown("""
+Before building forecasting models, we perform comprehensive EDA to understand:
+- Data quality issues (negatives, missing values, outliers)
+- Seasonal patterns (daily, weekly cycles)
+- Zero-inflation (expected for solar at night)
+- Weather alignment (ensure weather data matches generation timestamps)
+    """)
+
+    # Load latest EDA results
+    data_dir = Path(db_path).parent
+    eda_dir = data_dir / "eda"
+
+    if not eda_dir.exists():
+        st.warning("No EDA results found. Run the pipeline to generate analysis.")
+        return
+
+    # Get latest EDA run
+    eda_runs = sorted([d for d in eda_dir.iterdir() if d.is_dir()], reverse=True)
+    if not eda_runs:
+        st.warning("No EDA results found. Run the pipeline to generate analysis.")
+        return
+
+    latest_eda = eda_runs[0]
+    st.info(f"📅 **EDA Results from**: {latest_eda.name}")
+
+    # Load recommendations
+    recs_file = latest_eda / "recommendations.json"
+    eda_report_file = latest_eda / "eda_report.json"
+
+    if recs_file.exists():
+        import json
+        with open(recs_file, 'r') as f:
+            recs = json.load(f)
+
+        # Data Summary
+        st.subheader("📊 Data Summary")
+        if 'preprocessing' in recs and 'data_summary' in recs['preprocessing']:
+            summary = recs['preprocessing']['data_summary']
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Rows", f"{summary.get('generation_rows', 0):,}")
+            with col2:
+                st.metric("Negative Values", summary.get('negative_count', 0))
+            with col3:
+                affected = summary.get('affected_series', [])
+                st.metric("Affected Series", len(affected))
+
+        # Preprocessing Recommendation
+        st.subheader("💡 Preprocessing Recommendation")
+        if 'preprocessing' in recs:
+            prep = recs['preprocessing']
+
+            col1, col2 = st.columns([3, 1])
+
+            with col1:
+                st.markdown(f"""
+**Policy**: `{prep.get('negative_policy', 'N/A')}`
+
+**Reason**: {prep.get('negative_reason', 'No reason provided')}
+
+**Confidence**: {prep.get('negative_confidence', 'N/A')}
+                """)
+
+            with col2:
+                confidence = prep.get('negative_confidence', 'LOW')
+                if confidence == 'HIGH':
+                    st.success("✅ High Confidence")
+                elif confidence == 'MEDIUM':
+                    st.info("⚠️ Medium Confidence")
+                else:
+                    st.warning("⚠️ Low Confidence")
+
+    # Visualizations (Enhanced with Interactive Plotly)
+    st.subheader("📈 EDA Visualizations (Interactive)")
+
+    viz_tabs = st.tabs([
+        "🔴 Negative Values",
+        "📅 Seasonality",
+        "0️⃣ Zero Inflation",
+        "🌤️ Generation Profiles"
+    ])
+
+    with viz_tabs[0]:
+        st.markdown("""
+**Negative Value Investigation**
+
+Physical reality: Renewable generation CANNOT be negative. Negative values indicate:
+- Net generation accounting (gross - auxiliary load)
+- Metering errors
+- Data reporting issues
+
+For forecasting, we clamp these to zero as recommended by EDA.
+        """)
+
+        # Try to load generation data for interactive viz
+        generation_path = data_dir / "generation.parquet"
+        if generation_path.exists():
+            gen_df = pd.read_parquet(generation_path)
+            gen_df['ds'] = pd.to_datetime(gen_df['ds'])
+
+            # Show negative values if they exist
+            negatives = gen_df[gen_df['y'] < 0]
+
+            if not negatives.empty:
+                st.warning(f"⚠️ Found {len(negatives)} negative values across {negatives['unique_id'].nunique()} series")
+
+                # Interactive scatter plot of negatives
+                fig_neg = go.Figure()
+
+                for series_id in negatives['unique_id'].unique():
+                    series_data = negatives[negatives['unique_id'] == series_id]
+                    fig_neg.add_trace(go.Scatter(
+                        x=series_data['ds'],
+                        y=series_data['y'],
+                        mode='markers',
+                        name=series_id,
+                        marker=dict(size=8, opacity=0.6)
+                    ))
+
+                fig_neg.add_hline(y=0, line_dash="dash", line_color="black", annotation_text="Zero Line")
+
+                fig_neg.update_layout(
+                    title="Negative Values Timeline",
+                    xaxis_title="Timestamp",
+                    yaxis_title="Generation (MWh)",
+                    height=400,
+                    hovermode='x unified'
+                )
+
+                st.plotly_chart(fig_neg, width="stretch")
+            else:
+                st.success("✅ No negative values detected in current data!")
+
+        # Show static image as reference
+        neg_img = latest_eda / "negative_values" / "negative_investigation.png"
+        if neg_img.exists():
+            with st.expander("📊 Static EDA Report", expanded=False):
+                st.image(str(neg_img), width="stretch")
+
+    with viz_tabs[1]:
+        st.markdown("""
+**Seasonality Analysis**
+
+Renewable generation exhibits strong cyclical patterns:
+- **Daily**: Solar peaks at noon, wind varies by time
+- **Weekly**: Industrial demand affects generation patterns
+- **Seasonal**: Summer vs winter differences
+
+These patterns are captured by MSTL (Multiple Seasonal-Trend decomposition using LOESS) in our models.
+        """)
+
+        # Interactive hourly profile
+        if generation_path.exists():
+            gen_df = pd.read_parquet(generation_path)
+            gen_df['ds'] = pd.to_datetime(gen_df['ds'])
+            gen_df['hour'] = gen_df['ds'].dt.hour
+            gen_df['dow'] = gen_df['ds'].dt.day_name()
+
+            # Hourly profiles by series
+            fig_hour = go.Figure()
+
+            for series_id in gen_df['unique_id'].unique():
+                series_data = gen_df[gen_df['unique_id'] == series_id]
+                hourly_avg = series_data.groupby('hour')['y'].mean()
+
+                fig_hour.add_trace(go.Scatter(
+                    x=hourly_avg.index,
+                    y=hourly_avg.values,
+                    mode='lines+markers',
+                    name=series_id,
+                    line=dict(width=2)
+                ))
+
+            fig_hour.update_layout(
+                title="Average Generation by Hour of Day",
+                xaxis_title="Hour of Day",
+                yaxis_title="Average Generation (MWh)",
+                height=450,
+                hovermode='x unified',
+                xaxis=dict(tickmode='linear', tick0=0, dtick=2)
+            )
+
+            st.plotly_chart(fig_hour, width="stretch")
+
+            # Day of week profile
+            st.markdown("**Weekly Patterns**")
+
+            dow_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            dow_avg = gen_df.groupby(['unique_id', 'dow'])['y'].mean().reset_index()
+
+            fig_dow = go.Figure()
+
+            for series_id in dow_avg['unique_id'].unique():
+                series_data = dow_avg.loc[dow_avg["unique_id"] == series_id].copy()
+                series_data.loc[:, "dow"] = pd.Categorical(
+                    series_data["dow"],
+                    categories=dow_order,
+                    ordered=True,
+                )
+                series_data = series_data.sort_values('dow')
+
+                fig_dow.add_trace(go.Bar(
+                    x=series_data['dow'],
+                    y=series_data['y'],
+                    name=series_id
+                ))
+
+            fig_dow.update_layout(
+                title="Average Generation by Day of Week",
+                xaxis_title="Day of Week",
+                yaxis_title="Average Generation (MWh)",
+                height=400,
+                barmode='group'
+            )
+
+            st.plotly_chart(fig_dow, width="stretch")
+
+        # Show static image as reference
+        season_img = latest_eda / "seasonality" / "hourly_profiles.png"
+        if season_img.exists():
+            with st.expander("📊 Static EDA Report", expanded=False):
+                st.image(str(season_img), width="stretch")
+
+    with viz_tabs[2]:
+        st.markdown("""
+**Zero-Inflation Analysis**
+
+**Expected Zeros**:
+- **Solar**: Nighttime generation is ALWAYS zero (sun not shining)
+- **Wind**: Rarely zero (wind always has some component)
+
+Zero-inflation is normal for solar and factored into model selection.
+We avoid MAPE (Mean Absolute Percentage Error) as it's undefined when y=0.
+        """)
+
+        # Interactive zero analysis
+        if generation_path.exists():
+            gen_df = pd.read_parquet(generation_path)
+            gen_df['ds'] = pd.to_datetime(gen_df['ds'])
+            gen_df['hour'] = gen_df['ds'].dt.hour
+
+            # Calculate zero ratio by hour for each series
+            fig_zero = go.Figure()
+
+            for series_id in gen_df['unique_id'].unique():
+                series_data = gen_df[gen_df['unique_id'] == series_id]
+                # Use vectorized approach: faster and no FutureWarning
+                zero_by_hour = (
+                    series_data.assign(is_zero=series_data['y'].eq(0))
+                    .groupby('hour')['is_zero']
+                    .mean() * 100
+                )
+
+                fig_zero.add_trace(go.Bar(
+                    x=zero_by_hour.index,
+                    y=zero_by_hour.values,
+                    name=series_id,
+                    opacity=0.7
+                ))
+
+            fig_zero.update_layout(
+                title="Zero-Inflation by Hour of Day",
+                xaxis_title="Hour of Day",
+                yaxis_title="Percentage of Zero Values (%)",
+                height=450,
+                barmode='group',
+                xaxis=dict(tickmode='linear', tick0=0, dtick=2)
+            )
+
+            st.plotly_chart(fig_zero, width="stretch")
+
+            # Summary statistics
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("**Solar Series (Expected Zeros)**")
+                solar_series = [s for s in gen_df['unique_id'].unique() if 'SUN' in s]
+                for series_id in solar_series:
+                    zero_pct = (gen_df[gen_df['unique_id'] == series_id]['y'] == 0).mean() * 100
+                    st.metric(series_id, f"{zero_pct:.1f}%")
+
+            with col2:
+                st.markdown("**Wind Series (Minimal Zeros)**")
+                wind_series = [s for s in gen_df['unique_id'].unique() if 'WND' in s]
+                for series_id in wind_series:
+                    zero_pct = (gen_df[gen_df['unique_id'] == series_id]['y'] == 0).mean() * 100
+                    st.metric(series_id, f"{zero_pct:.1f}%")
+
+        # Show static image as reference
+        zero_img = latest_eda / "zero_inflation" / "zero_inflation.png"
+        if zero_img.exists():
+            with st.expander("📊 Static EDA Report", expanded=False):
+                st.image(str(zero_img), width="stretch")
+
+    with viz_tabs[3]:
+        st.markdown("""
+**Generation Profiles Over Time**
+
+Interactive time series view of generation data across all regions and fuel types.
+Use the legend to toggle series on/off.
+        """)
+
+        if generation_path.exists():
+            gen_df = pd.read_parquet(generation_path)
+            gen_df['ds'] = pd.to_datetime(gen_df['ds'])
+
+            # Time series plot
+            fig_ts = go.Figure()
+
+            for series_id in gen_df['unique_id'].unique():
+                series_data = gen_df[gen_df['unique_id'] == series_id].sort_values('ds')
+                fig_ts.add_trace(go.Scatter(
+                    x=series_data['ds'],
+                    y=series_data['y'],
+                    mode='lines',
+                    name=series_id,
+                    line=dict(width=1.5),
+                    opacity=0.8
+                ))
+
+            fig_ts.update_layout(
+                title="Generation Time Series (All Series)",
+                xaxis_title="Timestamp",
+                yaxis_title="Generation (MWh)",
+                height=500,
+                hovermode='x unified',
+                legend=dict(
+                    orientation="v",
+                    yanchor="top",
+                    y=1,
+                    xanchor="left",
+                    x=1.01
+                )
+            )
+
+            # Add range slider
+            fig_ts.update_xaxes(
+                rangeslider_visible=True,
+                rangeselector=dict(
+                    buttons=list([
+                        dict(count=1, label="1d", step="day", stepmode="backward"),
+                        dict(count=7, label="1w", step="day", stepmode="backward"),
+                        dict(count=14, label="2w", step="day", stepmode="backward"),
+                        dict(step="all", label="All")
+                    ])
+                )
+            )
+
+            st.plotly_chart(fig_ts, width="stretch")
+
+            # Summary statistics
+            st.markdown("**Summary Statistics**")
+            summary_stats = gen_df.groupby('unique_id')['y'].agg(['count', 'mean', 'std', 'min', 'max']).round(2)
+            summary_stats.columns = ['Count', 'Mean (MWh)', 'Std Dev', 'Min', 'Max']
+            st.dataframe(summary_stats, width="stretch")
+
+    # ========================================================================
+    # Section 4: Model & Architecture Details
+    # ========================================================================
+    st.header("🤖 Modeling Approach")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("Why StatsForecast?")
+        st.markdown("""
+We use **StatsForecast** (Nixtla) instead of Prophet or MLForecast:
+
+✅ **Native multi-series support** (10x faster)
+✅ **Built-in prediction intervals** (no conformal prediction needed)
+✅ **Production-ready** (battle-tested at scale)
+✅ **Exogenous regressors** (weather variables)
+
+**Models Tested**:
+- **MSTL**: Multiple Seasonal-Trend decomposition
+- **AutoARIMA**: Automatic ARIMA model selection
+- **AutoETS**: Exponential smoothing state space
+
+Best model selected via cross-validation (RMSE).
+        """)
+
+    with col2:
+        st.subheader("Weather Features")
+        st.markdown("""
+**7 Key Weather Variables** (Open-Meteo API):
+
+☀️ **Solar-Related**:
+- Direct solar radiation
+- Diffuse solar radiation
+- Cloud cover
+
+💨 **Wind-Related**:
+- Wind speed at 10m
+- Wind speed at 100m
+
+🌡️ **General**:
+- Temperature at 2m
+
+These features are strongly correlated with generation and improve forecast accuracy by 15-20%.
+        """)
+
+    # ========================================================================
+    # Section 5: Data Sources
+    # ========================================================================
+    st.header("📡 Data Sources")
+
+    source_col1, source_col2 = st.columns(2)
+
+    with source_col1:
+        st.subheader("🏭 EIA RTO Fuel-Type Data")
+        st.markdown("""
+**Energy Information Administration (EIA)**
+
+- **Authoritative**: Official US electricity generation data
+- **Coverage**: Hourly granularity covering 80%+ of US grid
+- **Accessibility**: Free API with key (no usage limits)
+- **Timeliness**: Real-time with 12-48h publishing lag
+- **Quality**: High (direct from RTOs/ISOs)
+
+🔗 [EIA API Documentation](https://www.eia.gov/opendata/)
+        """)
+
+    with source_col2:
+        st.subheader("🌤️ Open-Meteo Weather API")
+        st.markdown("""
+**Open-Meteo: Open-source Weather API**
+
+- **Free & Open**: No authentication, unlimited requests
+- **Leakage Prevention**: Separate historical + forecast endpoints
+- **Global Coverage**: Works for any lat/lon coordinate
+- **Variables**: 7 key features correlated with generation
+- **Reliability**: 99.9%+ uptime
+
+🔗 [Open-Meteo Documentation](https://open-meteo.com/en/docs)
+        """)
+
+    # Final note
+    st.markdown("---")
+    st.info("""
+💡 **Note**: This dashboard provides real-time insights into renewable energy forecasting.
+For technical details, see the [GitHub repository](https://github.com/yourusername/atsaf)
+and the Jupyter notebook in `/chapters/renewable_energy_forecasting.ipynb`.
+    """)
+
+
 def run_pipeline_from_dashboard(db_path: str, regions: list, fuel_type: str):
     """Run the forecasting pipeline from the dashboard."""
     with st.spinner("Refreshing forecasts... (may take 2-3 minutes)"):
         try:
+            import os
+
             from src.renewable.jobs import run_hourly
 
-            # Run the hourly pipeline job
-            run_hourly.main()
+            # IMPORTANT: Force pipeline to run even if no new data
+            # When user explicitly clicks "Run Pipeline", they want it to run
+            # regardless of data freshness (which is only relevant for automated cron jobs)
+            original_force_run = os.environ.get("FORCE_RUN")
+            os.environ["FORCE_RUN"] = "true"
+
+            try:
+                # Run the hourly pipeline job
+                run_hourly.main()
+            finally:
+                # Restore original FORCE_RUN setting
+                if original_force_run is None:
+                    os.environ.pop("FORCE_RUN", None)
+                else:
+                    os.environ["FORCE_RUN"] = original_force_run
 
             st.success("Pipeline completed! Forecasts have been updated with latest EIA data.")
             st.info("Reloading page to show new forecasts...")

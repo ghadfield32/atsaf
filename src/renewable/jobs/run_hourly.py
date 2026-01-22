@@ -16,6 +16,11 @@ from src.renewable.data_freshness import check_all_series_freshness, FreshnessCh
 
 load_dotenv()
 
+# Suppress DeprecationWarning from statsforecast library (invalid escape sequences)
+# These are in third-party code we cannot fix directly
+import warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning, module='statsforecast')
+
 
 def _env_list(name: str, default_csv: str) -> list[str]:
     raw = os.getenv(name, default_csv)
@@ -142,8 +147,11 @@ def run_hourly_pipeline() -> dict:
     start_date = os.getenv("RENEWABLE_START_DATE", "")
     end_date = os.getenv("RENEWABLE_END_DATE", "")
 
-    # Check if we should force run (e.g., manual dispatch)
+    # Check if we should force run (e.g., manual dispatch from dashboard)
     force_run = os.getenv("FORCE_RUN", "false").lower() == "true"
+
+    # DEBUG: Log force_run status
+    print(f"[pipeline] FORCE_RUN={force_run}")
 
     # Data freshness check - skip full pipeline if no new data
     if not force_run:
@@ -197,7 +205,8 @@ def run_hourly_pipeline() -> dict:
 
             print(f"Freshness check: {freshness.summary}")
     else:
-        print("FORCE_RUN=true - skipping freshness check")
+        print("[pipeline] FORCE_RUN=true - bypassing freshness check (manual run requested)")
+        print("[pipeline] Pipeline will run regardless of data freshness")
 
     cfg = RenewablePipelineConfig(
         regions=regions,
@@ -205,16 +214,24 @@ def run_hourly_pipeline() -> dict:
         lookback_days=lookback_days,
         horizon=horizon,
         horizon_preset=horizon_preset,  # Apply preset if specified
+        cv_windows=cv_windows,          # Pass to constructor to validate with correct value
+        cv_step_size=cv_step_size,      # Pass to constructor
         data_dir=data_dir,
         overwrite=True,
         start_date=start_date,
         end_date=end_date,
     )
-    cfg.cv_windows = cv_windows
-    cfg.cv_step_size = cv_step_size
+    # Post-construction assignments no longer needed
+
+    # Add option to skip EDA for fast iteration (set SKIP_EDA=true in .env)
+    skip_eda = os.getenv("SKIP_EDA", "false").lower() == "true"
 
     fetch_diagnostics: list[dict] = []
-    results = run_full_pipeline(cfg, fetch_diagnostics=fetch_diagnostics)
+    results = run_full_pipeline(
+        cfg,
+        fetch_diagnostics=fetch_diagnostics,
+        skip_eda=skip_eda,
+    )
 
     gen_path = cfg.generation_path()
     gen_df = pd.read_parquet(gen_path)

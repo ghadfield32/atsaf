@@ -27,3 +27,5 @@ test_*.txt
 scripts/interpretability/
 notebooks/interpretability/
 nul
+.claude/
+claude

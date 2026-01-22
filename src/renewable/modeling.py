@@ -228,7 +228,8 @@ class RenewableForecastModel:
             df: Preprocessed DataFrame from dataset_builder
         """
         from statsforecast import StatsForecast
-        from statsforecast.models import MSTL, AutoARIMA, AutoETS, SeasonalNaive
+        from statsforecast.models import (MSTL, AutoARIMA, AutoETS,
+                                          SeasonalNaive)
 
         train_df = self._prepare_training_df(df)
 
@@ -266,7 +267,8 @@ class RenewableForecastModel:
             (cv_results, leaderboard)
         """
         from statsforecast import StatsForecast
-        from statsforecast.models import MSTL, AutoARIMA, AutoETS, SeasonalNaive
+        from statsforecast.models import (MSTL, AutoARIMA, AutoETS,
+                                          SeasonalNaive)
 
         train_df = self._prepare_training_df(df)
 
@@ -452,7 +454,9 @@ def compute_baseline_metrics(
         metrics = compute_metrics(g['y'].values, g[model_name].values)
         return metrics['rmse']
 
-    per_window = cv_df.groupby(['unique_id', 'cutoff']).apply(window_rmse)
+    per_window = cv_df.groupby(['unique_id', 'cutoff']).apply(
+        window_rmse, include_groups=False
+    )
 
     rmse_mean = float(per_window.mean())
     rmse_std = float(per_window.std())
@@ -469,28 +473,136 @@ def compute_baseline_metrics(
 
 
 if __name__ == "__main__":
-    """Test modeling with physical constraints."""
+    """
+    Smoke test for renewable forecasting models.
+
+    This test validates the complete modeling pipeline using real data:
+    1. Loads modeling dataset created by the pipeline
+    2. Runs cross-validation with multiple models
+    3. Validates physical constraints (no negative forecasts)
+    4. Displays performance leaderboard
+    """
     import sys
     from pathlib import Path
 
-    logging.basicConfig(level=logging.INFO)
+    from src.renewable.dataset_builder import build_modeling_dataset
+    from src.renewable.eia_renewable import EIARenewableFetcher
+    from src.renewable.open_meteo import OpenMeteoRenewable
 
-    # Load preprocessed data
-    data_path = Path("data/renewable/modeling_dataset.parquet")
-    if not data_path.exists():
-        print("Preprocessed data not found. Run dataset_builder first.")
+    logging.basicConfig(level=logging.INFO)
+    fetcher = EIARenewableFetcher(debug_env=True)
+
+    print("=== Testing Single Region Fetch ===")
+    df_single = fetcher.fetch_region("CALI", "WND", "2024-12-01", "2024-12-03", debug=True)
+    print(f"Single region: {len(df_single)} rows")
+    print(df_single.head())
+
+    print("\n=== Testing Multi-Region Fetch ===")
+    df_multi = fetcher.fetch_all_regions("WND", "2024-12-01", "2024-12-03", regions=["CALI", "ERCO", "MISO"])
+    print(f"\nMulti-region: {len(df_multi)} rows")
+    print(f"Series: {df_multi['unique_id'].unique().tolist()}")
+
+    print("\n=== Series Summary ===")
+    print(fetcher.get_series_summary(df_multi))
+
+    # sun checks:
+    f = EIARenewableFetcher()
+    df = f.fetch_region("CALI", "SUN", "2024-12-01", "2024-12-03", debug=True)
+    print(df.head(), len(df))
+    
+    
+    # Real API smoke test (no key needed)
+    weather = OpenMeteoRenewable(strict=True)
+
+    print("=== Testing Historical Weather (REAL API) ===")
+    hist_df = weather.fetch_for_region("CALI", "2024-12-01", "2024-12-03", debug=True)
+    print(f"Historical rows: {len(hist_df)}")
+    print(hist_df.head())
+
+
+    generation_path = Path("data/renewable/generation.parquet")
+    weather_path = Path("data/renewable/weather.parquet")
+
+    if not generation_path.exists() or not weather_path.exists():
+        print("Data files not found. Run pipeline first.")
         sys.exit(1)
+
+    generation_df = pd.read_parquet(generation_path)
+    weather_df = pd.read_parquet(weather_path)
+
+
+
+    # First investigate negatives
+    print("\n[TEST 1] Investigating negatives...")
+    try:
+        _, _ = build_modeling_dataset(
+            generation_df, weather_df,
+            negative_policy='investigate',
+            output_dir=Path("data/renewable/test_investigate")
+        )
+    except ValueError as e:
+        print(str(e))
+
+    # Then build with clamp
+    print("\n[TEST 2] Building with clamp_to_zero...")
+    modeling_df, report = build_modeling_dataset(
+        generation_df, weather_df,
+        negative_policy='clamp_to_zero',
+        output_dir=Path("data/renewable/preprocessing")
+    )
+
+    print(f"\nFinal dataset shape: {modeling_df.shape}")
+    print(f"Columns: {modeling_df.columns.tolist()}")
+    print(f"\nSample:")
+    print(modeling_df.head())
+
+    # CRITICAL: Save the modeling dataset for smoke test
+    # This step was missing, causing FileNotFoundError below
+    data_path = Path("data/renewable/modeling_dataset.parquet")
+    print(f"\n[TEST 3] Saving modeling dataset to {data_path}...")
+    modeling_df.to_parquet(data_path, index=False)
+    print(f"✅ Saved {len(modeling_df):,} rows ({data_path.stat().st_size / 1024:.1f} KB)")
+
+    # smoke test on these
+    # Load preprocessed modeling dataset from pipeline (to verify save worked)
+    print("\n" + "="*80)
+    print("SMOKE TEST: Renewable Forecasting Models")
+    print("="*80)
+    print(f"Loading data from: {data_path}")
 
     df = pd.read_parquet(data_path)
 
-    # Run CV
+    print(f"Dataset shape: {df.shape}")
+    print(f"Columns: {df.columns.tolist()}")
+    print(f"Series: {df['unique_id'].unique().tolist()}")
+    print(f"Date range: {df['ds'].min()} to {df['ds'].max()}")
+    print()
+
+    # Run cross-validation
+    print("Running cross-validation (3 windows, 168h step)...")
     model = RenewableForecastModel(horizon=24, confidence_levels=(80, 95))
     cv, leaderboard = model.cross_validate(df, n_windows=3, step_size=168)
 
-    print("\nLeaderboard:")
+    print("\n" + "="*80)
+    print("LEADERBOARD (sorted by RMSE)")
+    print("="*80)
     print(leaderboard.to_string(index=False))
 
-    print("\nCV forecast stats:")
-    print(f"  Min forecast: {cv['MSTL_ARIMA'].min():.2f}")
-    print(f"  Max forecast: {cv['MSTL_ARIMA'].max():.2f}")
-    print(f"  Any negative: {(cv['MSTL_ARIMA'] < 0).any()}")
+    print("\n" + "="*80)
+    print("PHYSICAL CONSTRAINT VALIDATION")
+    print("="*80)
+    print(f"Min forecast (MSTL_ARIMA): {cv['MSTL_ARIMA'].min():.2f} MWh")
+    print(f"Max forecast (MSTL_ARIMA): {cv['MSTL_ARIMA'].max():.2f} MWh")
+    print(f"Any negative forecasts: {(cv['MSTL_ARIMA'] < 0).any()}")
+
+    if (cv['MSTL_ARIMA'] < 0).any():
+        print("\n⚠️ WARNING: Negative forecasts detected!")
+        print("This violates physical constraints (renewable generation cannot be negative)")
+        neg_count = (cv['MSTL_ARIMA'] < 0).sum()
+        print(f"Count: {neg_count} out of {len(cv)} ({100*neg_count/len(cv):.2f}%)")
+    else:
+        print("\n✅ SUCCESS: All forecasts are non-negative (physical constraints satisfied)")
+
+    print("="*80)
+
+    print("="*80)

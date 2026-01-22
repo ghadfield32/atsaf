@@ -1,0 +1,23 @@
+{
+  "merge_success_ratio": 1.0,
+  "correlation_by_fuel": {
+    "WND": {
+      "temperature_2m": -0.17351993332754406,
+      "wind_speed_10m": 0.778945455771032,
+      "wind_speed_100m": 0.8443265804183395,
+      "wind_direction_10m": 0.4366083298633356,
+      "direct_radiation": -0.039330019220870836,
+      "diffuse_radiation": -0.08728986247369964,
+      "cloud_cover": -0.09928775252352812
+    },
+    "SUN": {
+      "temperature_2m": 0.36582954139582835,
+      "wind_speed_10m": 0.13671422053027774,
+      "wind_speed_100m": -0.058453054517002126,
+      "wind_direction_10m": 0.1486466770523923,
+      "direct_radiation": 0.8682683464896878,
+      "diffuse_radiation": 0.7258581256011014,
+      "cloud_cover": -0.15828645596838203
+    }
+  }
+}

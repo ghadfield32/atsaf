@@ -1,0 +1,53 @@
+{
+  "run_at_utc": "2026-01-22T19:58:00.754045+00:00",
+  "status": "skipped",
+  "reason": "no_new_data",
+  "freshness_check": {
+    "checked_at_utc": "2026-01-22T19:57:50.571493+00:00",
+    "summary": "No new data found for any series",
+    "series_status": {
+      "CALI_WND": {
+        "prev_max_ds": "2026-01-22T07:00:00",
+        "current_max_ds": "2026-01-22T07:00:00+00:00",
+        "is_new": false
+      },
+      "CALI_SUN": {
+        "prev_max_ds": "2026-01-22T07:00:00",
+        "current_max_ds": "2026-01-22T07:00:00+00:00",
+        "is_new": false
+      },
+      "ERCO_WND": {
+        "prev_max_ds": "2026-01-22T05:00:00",
+        "current_max_ds": "2026-01-22T05:00:00+00:00",
+        "is_new": false
+      },
+      "ERCO_SUN": {
+        "prev_max_ds": "2026-01-22T05:00:00",
+        "current_max_ds": "2026-01-22T05:00:00+00:00",
+        "is_new": false
+      },
+      "MISO_WND": {
+        "prev_max_ds": "2026-01-22T04:00:00",
+        "current_max_ds": "2026-01-22T04:00:00+00:00",
+        "is_new": false
+      },
+      "MISO_SUN": {
+        "prev_max_ds": "2026-01-22T04:00:00",
+        "current_max_ds": "2026-01-22T04:00:00+00:00",
+        "is_new": false
+      }
+    }
+  },
+  "config": {
+    "regions": [
+      "CALI",
+      "ERCO",
+      "MISO"
+    ],
+    "fuel_types": [
+      "WND",
+      "SUN"
+    ],
+    "data_dir": "data/renewable"
+  }
+}

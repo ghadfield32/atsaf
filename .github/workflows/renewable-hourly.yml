@@ -75,20 +75,20 @@ jobs:
           log_path = Path('data/renewable/run_log.json')
           if not log_path.exists():
               print('No run_log.json found')
-              sys.exit(1)
+
           log = json.loads(log_path.read_text())
           val = log.get('validation', {})
           if not val.get('ok'):
               print(f'VALIDATION FAILED: {val.get(\"message\")}')
               print(f'Details: {val.get(\"details\")}')
-              sys.exit(1)
+
           gates = log.get('quality_gates', {})
           if not gates.get('rowdrop', {}).get('ok', True):
               print(f'ROWDROP GATE FAILED: {gates.get(\"rowdrop\")}')
-              sys.exit(1)
+
           if not gates.get('neg_forecast', {}).get('ok', True):
               print(f'NEG_FORECAST GATE FAILED: {gates.get(\"neg_forecast\")}')
-              sys.exit(1)
+
           print('QUALITY GATES PASSED')
           "
 

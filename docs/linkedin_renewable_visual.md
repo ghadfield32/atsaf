@@ -2,133 +2,187 @@
 
 ## The Visual (for creating in Figma/Canva/draw.io)
 
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                    RENEWABLE ENERGY FORECASTING PIPELINE                        │
-│                 24-Hour Probabilistic Forecasts for Wind & Solar                │
-└─────────────────────────────────────────────────────────────────────────────────┘
+### Mermaid Graph (use in docs or the post)
 
-    ┌─────────────────┐              ┌─────────────────┐
-    │   EIA API       │              │  Open-Meteo     │
-    │ 🔌 Generation   │              │  🌤️ Weather     │
-    │                 │              │                 │
-    │ • Wind (MWh)    │              │ • Temperature   │
-    │ • Solar (MWh)   │              │ • Wind Speed    │
-    │ • 5 US Regions  │              │ • Radiation     │
-    │                 │              │ • Cloud Cover   │
-    └────────┬────────┘              └────────┬────────┘
-             │                                │
-             │    ┌───────────────────────┐   │
-             └────┤    DATA PIPELINE      ├───┘
-                  │                       │
-                  │  ✓ Validation Gates   │
-                  │  ✓ Quality Checks     │
-                  │  ✓ Gap Detection      │
-                  └───────────┬───────────┘
-                              │
-                  ┌───────────▼───────────┐
-                  │    ML MODELING        │
-                  │                       │
-                  │  📊 StatsForecast     │
-                  │  • MSTL (Best)        │
-                  │  • AutoARIMA          │
-                  │  • AutoETS            │
-                  │                       │
-                  │  🔄 Log Transform     │
-                  │  (Guarantees y ≥ 0)   │
-                  └───────────┬───────────┘
-                              │
-                  ┌───────────▼───────────┐
-                  │    FORECASTS          │
-                  │                       │
-                  │  📈 24h Point Forecast│
-                  │  📊 80% Confidence    │
-                  │  📊 95% Confidence    │
-                  │                       │
-                  │  Per region × fuel    │
-                  └───────────┬───────────┘
-                              │
-        ┌─────────────────────┼─────────────────────┐
-        │                     │                     │
-        ▼                     ▼                     ▼
-   ┌─────────┐         ┌─────────────┐       ┌───────────┐
-   │ 📦 Git  │         │ 📊 Streamlit │       │ 🚨 Drift  │
-   │ Commit  │         │  Dashboard   │       │ Monitoring│
-   └─────────┘         └─────────────┘       └───────────┘
+```mermaid
+graph TB
+    A[EIA API<br/>Generation Data] -->|fetch_renewable_data| B[generation.parquet<br/>unique_id, ds, y]
+    C[Open-Meteo API<br/>Weather Data] -->|fetch_renewable_weather| D[weather.parquet<br/>ds, region, weather_vars]
+
+    B --> E[EDA Module<br/>Investigate negatives, missing, seasonality]
+    D --> E
+
+    E -->|Recommendations| F[Dataset Builder<br/>Fuel-specific preprocessing]
+
+    F -->|Validated Dataset| G[StatsForecast CV<br/>MSTL_ARIMA, AutoARIMA, AutoETS, AutoTheta]
+    F -->|Optional| H[LightGBM + SHAP<br/>Interpretability]
+
+    G --> I[Best Model Selection<br/>Leaderboard + Baseline]
+    I --> J[Generate Forecasts<br/>Horizon + Intervals]
+
+    J --> K[forecasts.parquet<br/>yhat, yhat_lo_80/95, yhat_hi_80/95]
+    J --> L[Quality Gates<br/>Rowdrop + Negative Forecasts]
+
+    L -->|Pass| M[run_log.json + Artifacts]
+    L -->|Fail| N[Pipeline Fails<br/>Manual Review]
+
+    H --> O[Interpretability Artifacts<br/>Feature Importance + SHAP + PDP]
+
+    style E fill:#e1f5ff
+    style F fill:#fff4e1
+    style G fill:#f0e1ff
+    style L fill:#ffe1e1
 ```
 
+### High-Level ASCII Visual
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                    RENEWABLE ENERGY FORECASTING PIPELINE                     │
+│                 24–72h Probabilistic Forecasts for Wind & Solar              │
+└──────────────────────────────────────────────────────────────────────────────┘
+    ┌──────────────────────┐                  ┌──────────────────────┐
+    │  EIA API             │                  │  Open-Meteo API       │
+    │  Generation          │                  │  Weather (Hist+Fcst)  │
+    │  • Wind / Solar MWh  │                  │  • 7 Weather Vars     │
+    │  • 5 US Regions      │                  │  • No leakage         │
+    └──────────┬───────────┘                  └──────────┬───────────┘
+               │                                         │
+               └──────────────┬──────────────────────────┘
+                              ▼
+                  ┌──────────────────────────┐
+                  │   EDA + PREPROCESSING    │
+                  │  • Negative investigation│
+                  │  • Hourly grid enforcement│
+                  │  • Time features         │
+                  │  • Weather alignment     │
+                  └───────────┬──────────────┘
+                              ▼
+                  ┌──────────────────────────┐
+                  │     MODELING (CV)        │
+                  │  StatsForecast Models    │
+                  │  • MSTL_ARIMA (best)     │
+                  │  • AutoARIMA / AutoETS   │
+                  │  • AutoTheta / Naive     │
+                  └───────────┬──────────────┘
+                              ▼
+                  ┌──────────────────────────┐
+                  │  FORECASTS + INTERVALS   │
+                  │  • 24h horizon default   │
+                  │  • 80% / 95% intervals   │
+                  │  • Clip to >= 0          │
+                  └───────────┬──────────────┘
+                              ▼
+         ┌────────────────────┼────────────────────┐
+         ▼                    ▼                    ▼
+  ┌────────────┐      ┌────────────────┐   ┌──────────────────┐
+  │ run_log.json│      │ Streamlit      │   │ Drift + Gates     │
+  │ artifacts   │      │ Dashboard      │   │ Rowdrop / Neg     │
+  └────────────┘      └────────────────┘   └──────────────────┘
+```
 
 ---
 
-## Key Decisions That Made This Work
+## Step-by-Step Build Choices (What I Actually Did)
 
-### 1. 🎯 Log Transform for Non-Negativity
-**Problem:** ARIMA models can predict negative energy generation (impossible!)
-**Bad Solution:** Clamp predictions to 0 (masks the problem)
-**Our Solution:** Log-transform training data → Model predicts in log-space → Inverse transform guarantees y ≥ 0
-
-```
-Training:  y → log(y + 1)
-Predict:   ŷ = exp(ŷ_log) - 1  ← Always ≥ 0 ✓
-```
-
-### 2. ⏰ Per-Region Lag Handling
-**Problem:** Different regions publish at different times
-- MISO: 04:00 UTC (earliest)
-- ERCO: 06:00 UTC (2h later)
-
-**Bad Solution:** Use global max timestamp (breaks MISO)
-**Our Solution:** Use min(per_series_max) for weather alignment
-
-### 3. 🔍 Data Cleaning vs Defensive Coding
-**Upstream Issue:** EIA returns negative solar values
-**Classification:** This is DATA CLEANING (correcting bad upstream), NOT defensive coding
-**Why Clamp (not filter)?** Preserves hourly grid structure required for time series modeling
-
-### 4. 📡 Two Weather Endpoints
-**Historical API:** Training data (no leakage of future actuals)
-**Forecast API:** Prediction data (realistic - weather forecasts available IRL)
-
-### 5. 🛡️ Quality Gates
-- **Rowdrop Gate:** Detect EIA API outages (>30% data drop = fail)
-- **Neg Forecast Gate:** Detect model issues (<10% negatives allowed)
-- **10-Step Validation:** Comprehensive data quality checks before training
+1. **Pull generation data from EIA (hourly)** for multiple ISO/RTO regions and two fuels (WND, SUN). The fetcher is resilient (pagination, retries) and logs coverage per series.
+2. **Pull weather data from Open-Meteo** using *historical endpoints for training* and *forecast endpoints for prediction* to avoid leakage.
+3. **Run EDA first** to understand negative values, missing data, seasonality, and zero inflation (especially solar at night). EDA outputs a `recommendations.json` with preprocessing policies.
+4. **Build modeling datasets per fuel type** (wind vs solar) using those EDA recommendations. This step:
+   - clamps negative generation to zero when recommended,
+   - enforces a complete hourly grid (drops incomplete series),
+   - adds time features (hour/day-of-week sin/cos),
+   - aligns weather to timestamps (drops rows with missing weather).
+5. **Train models with StatsForecast** using cross-validation (adaptive windows based on shortest series) and compare multiple statistical models.
+6. **Select the best model by RMSE** and store a full leaderboard and baseline metrics in `run_log.json` for the dashboard.
+7. **Generate forecasts** using the *min of per-series max timestamps* (not global max) to handle different publishing lags across regions.
+8. **Enforce physical constraints** by clipping all forecasts and intervals to **>= 0** so no negative energy predictions leak out.
+9. **Quality gates + drift checks** guard production:
+   - rowdrop gate (detect API outages),
+   - negative forecast ratio gate, and
+   - drift detection (current RMSE vs baseline mean + 2*std).
+10. **Expose everything in a Streamlit dashboard** with tabs for forecasts, drift, coverage, weather, EDA history, and interpretability.
 
 ---
 
-## LinkedIn Post Template
+## Key Engineering Decisions (with rationale)
+
+### 1) Physical Constraint Enforcement (No Negative Generation)
+**Problem:** Statistical models can output negatives due to Gaussian error assumptions. That violates physics.
+**Solution:** Clip *all* forecasts and prediction intervals to `>= 0`. This is enforced both in CV and final forecasts.
+
+### 2) EDA-Driven Preprocessing (Not Guesswork)
+**Problem:** EIA reports occasional negative values (net generation / auxiliary load).
+**Solution:** Run EDA first, then follow the recommended policy (typically `clamp_to_zero`). Preprocessing is transparent and logged.
+
+### 3) Hourly Grid Enforcement (No Fabricated Data)
+**Problem:** Time-series models require complete grids; gaps break seasonality modeling.
+**Solution:** Drop series with too many missing hours (default 2% threshold). No imputation or fabricated points.
+
+### 4) Per-Series Lag Handling (Correct Weather Alignment)
+**Problem:** Regions publish at different times (MISO earlier than ERCO, etc.).
+**Bad idea:** Use the global max timestamp, which breaks early series.
+**Solution:** Use `min(per_series_max)` for aligning future weather and forecast start times.
+
+### 5) Separate Historical vs Forecast Weather (No Leakage)
+**Problem:** Using future weather observations would leak information.
+**Solution:** Train on historical weather and predict with forecast weather from Open-Meteo.
+
+### 6) Model Choice = StatsForecast + CV Leaderboard
+**Why:** It supports multi-series forecasting with built-in prediction intervals and fast CV.
+**Models tested:** MSTL_ARIMA, AutoARIMA, AutoETS, AutoTheta, SeasonalNaive.
+
+### 7) Interpretability Without Sacrificing Forecast Quality
+**Approach:** Use LightGBM + SHAP *only* for interpretability artifacts. Forecasts still come from statistical models that give better uncertainty.
+
+---
+
+## Dashboard Highlights (from `src/renewable/dashboard.py`)
+
+- **Forecasts Tab**: Interactive 24h forecasts with 80%/95% intervals and local time display.
+- **Drift Tab**: Alerts + stability summaries from baseline RMSE thresholds.
+- **Coverage Tab**: Calibration checks (nominal vs empirical coverage).
+- **Weather Tab**: Region-specific weather feature plots.
+- **Interpretability Tab**: Feature importance, SHAP summary, PDPs, and waterfall plots.
+- **Insights Tab**: Mermaid architecture, region context, EDA history, and model leaderboard.
+
+---
+
+## LinkedIn Post Template (Updated)
 
 ```
-🔋 Built a production ML pipeline for renewable energy forecasting.
+Built a production ML pipeline for renewable energy forecasting.
 
-The challenge: Predict 24 hours of wind & solar generation for 5 US regions using weather data.
+The challenge: Predict 24–72 hours of wind & solar generation across major US regions
+using only public grid + weather data — and make it production-grade.
 
-5 engineering decisions that made it work:
+7 engineering choices that made it work:
 
-1️⃣ LOG TRANSFORM
-ARIMA models can predict negative values. Energy generation can't be negative.
-Solution: Train in log-space, transform back. Math guarantees non-negativity.
+1) Physical constraints
+Energy can't be negative. Forecasts + intervals are clipped to >= 0 in both CV and production.
 
-2️⃣ HANDLE REGIONAL LAG
-EIA publishes MISO data 2h before ERCO.
-Using global max breaks earlier series.
-Solution: Align weather to min(per_series_max).
+2) EDA-driven preprocessing
+I run EDA first, then apply explicit policies (clamp negatives, drop incomplete series).
+No hidden data cleaning.
 
-3️⃣ DATA CLEANING ≠ DEFENSIVE CODING
-When upstream data has errors (negative solar), clamp at ingestion.
-This is data cleaning, not masking model bugs.
+3) Hourly grid enforcement
+Gaps break seasonal models. I drop series with too many missing hours instead of imputing.
 
-4️⃣ SEPARATE HISTORICAL & FORECAST WEATHER
-Train on historical weather (no leakage).
-Predict with forecast weather (realistic).
+4) Per-series lag alignment
+Regions publish at different times. I align to min(per-series max) so forecasts stay valid.
 
-5️⃣ QUALITY GATES
-Fail loudly when data quality degrades.
-Better to catch issues early than ship bad forecasts.
+5) Separate historical vs forecast weather
+Training uses historical weather; prediction uses forecast weather. No leakage.
 
-Tech: Python, StatsForecast, GitHub Actions, Streamlit
+6) Cross-validated model leaderboard
+MSTL_ARIMA, AutoARIMA, AutoETS, AutoTheta, SeasonalNaive — best model chosen by RMSE.
 
-#MachineLearning #DataEngineering #RenewableEnergy #Python
+7) Production gates + drift monitoring
+Rowdrop gate, negative forecast ratio gate, and drift thresholds from CV baselines.
+
+Stack: Python, StatsForecast, Open-Meteo, EIA API, Streamlit, SHAP
+
+#MachineLearning #DataEngineering #RenewableEnergy #TimeSeries #Python
 ```
 
 ---
@@ -138,18 +192,19 @@ Tech: Python, StatsForecast, GitHub Actions, Streamlit
 ### Option A: Single Infographic (Recommended)
 **Dimensions:** 1200 x 1500 px (portrait)
 **Sections:**
-1. Header: "Renewable Energy Forecasting Pipeline" + hero visual
-2. Data flow diagram (simplified 4-box version)
-3. 5 key decisions (icons + 1-liner each)
-4. Tech stack badges
-5. Call to action (link to repo/blog)
+1. Header: "Renewable Energy Forecasting Pipeline"
+2. Mermaid/flow diagram (simplified)
+3. Step-by-step pipeline decisions (EDA → preprocessing → modeling → gates)
+4. Model leaderboard + coverage callout
+5. CTA: link to repo or dashboard
 
-### Option B: Carousel (5 slides)
-1. **Cover:** "5 Engineering Decisions for Production ML"
-2. **Slide 2:** The Problem (diagram of data sources → forecasts)
-3. **Slide 3:** Decisions 1-2 (Log transform, Regional lag)
-4. **Slide 4:** Decisions 3-4 (Data cleaning, Two endpoints)
-5. **Slide 5:** Decision 5 + Results (Quality gates + metrics)
+### Option B: Carousel (6 slides)
+1. **Cover:** "Building a Production Renewable Forecasting Pipeline"
+2. **Data Sources:** EIA + Open-Meteo (no leakage)
+3. **Preprocessing + EDA:** Negative handling + hourly grid
+4. **Modeling:** StatsForecast CV + leaderboard
+5. **Quality Gates + Drift:** Reliability controls
+6. **Dashboard + Interpretability:** Streamlit + SHAP artifacts
 
 ---
 
@@ -157,80 +212,43 @@ Tech: Python, StatsForecast, GitHub Actions, Streamlit
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│                     DATA SOURCES                           │
+│                      DATA SOURCES                          │
 ├────────────────────────────────────────────────────────────┤
-│  ⚡ EIA API                    🌤️ Open-Meteo              │
-│  • Wind/Solar MWh              • 7 Weather Variables       │
-│  • 5 US Regions                • Historical + Forecast     │
-│  • 12-48h publishing lag       • Updated 4x/day            │
+│  ⚡ EIA API                    🌤️ Open-Meteo               │
+│  • Wind/Solar MWh              • 7 Weather Variables        │
+│  • 5 US Regions                • Historical + Forecast      │
+│  • 12–48h publishing lag       • Forecast endpoint (future) │
 └──────────────────────────┬─────────────────────────────────┘
                            │
                            ▼
 ┌────────────────────────────────────────────────────────────┐
-│                  VALIDATION PIPELINE                       │
+│              EDA + DATASET BUILDER                         │
 ├────────────────────────────────────────────────────────────┤
-│  ✓ Column validation           ✓ Freshness check          │
-│  ✓ No negatives                ✓ Hourly grid complete     │
-│  ✓ No duplicates               ✓ All series present       │
+│  ✓ Negative investigation → clamp_to_zero                 │
+│  ✓ Hourly grid enforcement (drop incomplete)              │
+│  ✓ Time features (hour/dow sin/cos)                       │
+│  ✓ Weather alignment + missing weather drops              │
 └──────────────────────────┬─────────────────────────────────┘
                            │
                            ▼
 ┌────────────────────────────────────────────────────────────┐
-│                    ML MODELING                             │
+│                MODELING & VALIDATION                       │
 ├────────────────────────────────────────────────────────────┤
-│  📈 StatsForecast Models       🔄 Log Transform            │
-│  • MSTL (daily + weekly)       • y → log1p(y)             │
-│  • AutoARIMA                   • ŷ = expm1(ŷ_log)         │
-│  • AutoETS                     • Guarantees ŷ ≥ 0         │
-│  • Cross-validation (2 folds)                              │
+│  📈 StatsForecast CV models                                │
+│  • MSTL_ARIMA (multi-seasonal)                             │
+│  • AutoARIMA / AutoETS / AutoTheta / Naive                 │
+│  • RMSE leaderboard + baseline metrics                     │
 └──────────────────────────┬─────────────────────────────────┘
                            │
                            ▼
 ┌────────────────────────────────────────────────────────────┐
 │                    OUTPUTS                                 │
 ├────────────────────────────────────────────────────────────┤
-│  📊 24h Forecasts              🛡️ Quality Gates           │
-│  • Point estimates             • Rowdrop detection         │
-│  • 80% confidence              • Neg forecast check        │
-│  • 95% confidence              • Drift monitoring          │
+│  📊 24–72h Forecasts          🛡️ Quality Gates             │
+│  • Point estimates            • Rowdrop check              │
+│  • 80% / 95% intervals         • Negative forecast ratio    │
+│  • Clip to >= 0                • Drift detection (RMSE)     │
 │                                                            │
-│  📦 Artifacts → Git            📈 Dashboard → Streamlit   │
+│  📦 run_log + artifacts        📈 Streamlit dashboard       │
 └────────────────────────────────────────────────────────────┘
 ```
-
----
-
-## Color Palette Suggestion
-
-| Element | Color | Hex |
-|---------|-------|-----|
-| EIA Data | Blue | #3B82F6 |
-| Weather Data | Orange/Yellow | #F59E0B |
-| Validation | Green | #10B981 |
-| ML Models | Purple | #8B5CF6 |
-| Outputs | Teal | #14B8A6 |
-| Background | Dark Gray | #1F2937 |
-| Text | White/Light | #F9FAFB |
-
----
-
-## Key Metrics to Highlight
-
-| Metric | Value | Context |
-|--------|-------|---------|
-| **Forecast Horizon** | 24 hours | Industry standard for day-ahead |
-| **Regions Covered** | 5 (CALI, ERCO, MISO, PJM, SWPP) | ~70% of US renewable capacity |
-| **Update Frequency** | Hourly | Could optimize to 4x/day |
-| **Confidence Intervals** | 80%, 95% | Quantifies uncertainty |
-| **Quality Gate Threshold** | 48h max lag | Matches EIA reality |
-| **Models Compared** | 4 | MSTL typically wins |
-
----
-
-## Technical Highlights for Data Engineers
-
-1. **Git as Artifact Store** - Version control for data lineage
-2. **GitHub Actions for Orchestration** - Free CI/CD, no Airflow needed
-3. **StatsForecast** - Fast, vectorized time series models
-4. **Parquet Format** - Column-store for efficient reads
-5. **Fail-Loud Validation** - No silent data issues

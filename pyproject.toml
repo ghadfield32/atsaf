@@ -17,11 +17,9 @@ classifiers = [
     "Intended Audience :: Education",
     "Topic :: Scientific/Engineering :: Information Analysis",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 requires-python = ">=3.11,<3.14"
 
@@ -64,6 +62,7 @@ dependencies = [
     "rich>=13.0.0",               # Pretty CLI output
     "evidently>=0.4.0",           # Drift detection and monitoring
     "streamlit>=1.30.0",          # Dashboard UI
+    "streamlit-mermaid~=0.3.0",   # Mermaid diagrams in Streamlit (latest 0.3.0) 
     "pydantic-settings>=2.0.0",   # Type-safe configuration
     "protobuf>=4.21,<7",
     "ipykernel>=6.0.0",            # IPython kernel for Jupyter
@@ -92,9 +91,11 @@ Repository = "https://github.com/RamiKrispin/atsaf.git"
 Issues = "https://github.com/RamiKrispin/atsaf/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["eia_data.py"]
+packages = ["src"]
+
+[tool.black]
 line-length = 100
-target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+target-version = ['py311', 'py312', 'py313']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -126,7 +127,7 @@ ignore = [
 ]
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

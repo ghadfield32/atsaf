@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import warnings
+from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -29,6 +30,55 @@ warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
 
 plt.rcParams['figure.figsize'] = (12, 6)
 plt.rcParams['figure.dpi'] = 100
+
+
+@dataclass
+class PreprocessingRecommendation:
+    """Structured recommendation from EDA for preprocessing."""
+
+    # Negative value handling
+    negative_policy: str  # 'clamp_to_zero' | 'investigate' | 'pass_through'
+    negative_reason: str
+    negative_confidence: str  # 'HIGH' | 'MEDIUM' | 'LOW'
+
+    # Grid enforcement
+    max_missing_ratio: float = 0.02
+
+    # Series-specific overrides (for different fuel types)
+    series_overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    # Metadata
+    generated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    data_summary: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class EDARecommendations:
+    """Complete EDA output with preprocessing recommendations."""
+
+    preprocessing: PreprocessingRecommendation
+    modeling: Dict[str, Any]
+    evaluation: Dict[str, Any]
+
+    # Full investigation results for audit trail
+    negative_investigation: Dict[str, Any]
+    seasonality: Dict[str, Any]
+    zero_inflation: Dict[str, Any]
+    weather_alignment: Dict[str, Any]
+    timestamp: str = field(default_factory=lambda: datetime.now().strftime("%Y%m%d_%H%M%S"))
+
+    def save(self, output_path: Path) -> None:
+        """Save recommendations to JSON."""
+        with open(output_path, 'w') as f:
+            json.dump(asdict(self), f, indent=2, default=str)
+            f.write('\n')
+
+    @classmethod
+    def load(cls, input_path: Path) -> 'EDARecommendations':
+        """Load recommendations from JSON."""
+        with open(input_path, 'r') as f:
+            data = json.load(f)
+        return cls(**data)
 
 
 class NegativeValueInvestigation:
@@ -338,7 +388,7 @@ def run_full_eda(
     generation_df: pd.DataFrame,
     weather_df: pd.DataFrame,
     output_dir: Path,
-) -> Dict[str, Any]:
+) -> EDARecommendations:
     """
     Run comprehensive EDA with emphasis on understanding data quality issues.
 
@@ -350,7 +400,7 @@ def run_full_eda(
         output_dir: Directory to save all outputs
 
     Returns:
-        Dictionary with all EDA results and recommendations
+        EDARecommendations object with structured preprocessing recommendations
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     report_dir = output_dir / timestamp
@@ -446,30 +496,32 @@ def run_full_eda(
     print("RECOMMENDATIONS")
     print("=" * 80)
 
-    recommendations = {
-        'preprocessing': {},
-        'modeling': {},
-        'evaluation': {},
-    }
+    # Build structured preprocessing recommendations
+    preprocessing_rec = PreprocessingRecommendation(
+        negative_policy=root_cause.get('preprocessing_policy', 'clamp_to_zero'),
+        negative_reason=root_cause['recommendation'],
+        negative_confidence=root_cause['confidence'],
+        max_missing_ratio=0.02,
+        series_overrides={},
+        data_summary=results['data_summary'],
+    )
 
-    # Preprocessing recommendations based on negative analysis
+    # Add series-specific patterns if negatives found
+    patterns = results['negative_investigation'].get('patterns', {})
     if neg_summary['negative_count'] > 0:
-        policy = root_cause.get('preprocessing_policy', 'clamp_to_zero')
-        recommendations['preprocessing']['negative_handling'] = {
-            'policy': policy,
-            'reason': root_cause['recommendation'],
-            'affected_series': neg_summary['affected_series'],
-        }
-        print(f"\n[PREPROCESSING] Negative Handling: {policy}")
-        print(f"   Reason: {root_cause['recommendation']}")
-    else:
-        recommendations['preprocessing']['negative_handling'] = {
-            'policy': 'none_needed',
-            'reason': 'No negative values in raw data',
-        }
+        for series_id in neg_summary['affected_series']:
+            series_pattern = patterns.get('by_series', {}).get(series_id, {})
+            preprocessing_rec.series_overrides[series_id] = {
+                'negative_ratio': series_pattern.get('ratio', 0),
+                'suggested_policy': root_cause.get('preprocessing_policy'),
+            }
+
+    print(f"\n[PREPROCESSING] Negative Handling: {preprocessing_rec.negative_policy}")
+    print(f"   Reason: {preprocessing_rec.negative_reason}")
+    print(f"   Confidence: {preprocessing_rec.negative_confidence}")
 
     # Modeling recommendations
-    recommendations['modeling'] = {
+    modeling_recs = {
         'seasonality': 'Use MSTL with season_length=[24, 168] (daily + weekly)',
         'forecast_constraints': 'ALWAYS clip forecasts and intervals to [0, ∞)',
         'reason': 'Physical constraint: renewable generation cannot be negative',
@@ -478,16 +530,36 @@ def run_full_eda(
     print(f"   Reason: Physical constraint - renewable generation cannot be negative")
 
     # Evaluation recommendations
-    recommendations['evaluation'] = {
+    avg_zero = 0.0
+    if solar_series:
+        avg_zero = sum(
+            zero_results['series_zero_ratios'].get(uid, {}).get('zero_ratio', 0)
+            for uid in solar_series
+        ) / len(solar_series)
+
+    evaluation_recs = {
         'metrics': ['RMSE', 'MAE'],
         'avoid': 'MAPE (undefined when y=0)',
         'reason': f"Solar has {avg_zero:.1%} zeros (nighttime)" if solar_series else "Standard metrics",
     }
     print(f"\n[EVALUATION] Use RMSE/MAE, avoid MAPE")
 
-    results['recommendations'] = recommendations
+    # Build final EDARecommendations object
+    recommendations = EDARecommendations(
+        preprocessing=preprocessing_rec,
+        modeling=modeling_recs,
+        evaluation=evaluation_recs,
+        negative_investigation=results['negative_investigation'],
+        seasonality=results['seasonality'],
+        zero_inflation=results['zero_inflation'],
+        weather_alignment=results['weather_alignment'],
+    )
 
-    # Save full report
+    # Save structured recommendations
+    recommendations.save(report_dir / 'recommendations.json')
+
+    # Also save full report (backward compatibility)
+    results['recommendations'] = asdict(recommendations)
     report_file = report_dir / 'eda_report.json'
     with open(report_file, 'w') as f:
         json.dump(results, f, indent=2, default=str)
@@ -497,7 +569,7 @@ def run_full_eda(
     print(f"[SUCCESS] EDA complete. Report saved to: {report_dir}")
     print("=" * 80)
 
-    return results
+    return recommendations
 
 
 def _analyze_seasonality(df: pd.DataFrame, output_dir: Path) -> Dict[str, Any]:
@@ -576,8 +648,11 @@ def _analyze_zero_inflation(df: pd.DataFrame, output_dir: Path) -> Dict[str, Any
     # Solar zeros by hour
     if solar_series:
         solar_df = df[df['unique_id'].isin(solar_series)]
-        solar_zero_by_hour = solar_df.groupby('hour').apply(
-            lambda x: (x['y'] == 0).mean()
+        # Use vectorized approach: faster and no FutureWarning
+        solar_zero_by_hour = (
+            solar_df.assign(is_zero=solar_df['y'].eq(0))
+            .groupby('hour')['is_zero']
+            .mean()
         )
         axes[0].bar(solar_zero_by_hour.index, solar_zero_by_hour.values,
                    color='orange', alpha=0.7)
@@ -589,8 +664,11 @@ def _analyze_zero_inflation(df: pd.DataFrame, output_dir: Path) -> Dict[str, Any
     # Wind zeros by hour
     if wind_series:
         wind_df = df[df['unique_id'].isin(wind_series)]
-        wind_zero_by_hour = wind_df.groupby('hour').apply(
-            lambda x: (x['y'] == 0).mean()
+        # Use vectorized approach: faster and no FutureWarning
+        wind_zero_by_hour = (
+            wind_df.assign(is_zero=wind_df['y'].eq(0))
+            .groupby('hour')['is_zero']
+            .mean()
         )
         axes[1].bar(wind_zero_by_hour.index, wind_zero_by_hour.values,
                    color='blue', alpha=0.7)

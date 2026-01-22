@@ -107,28 +107,28 @@ def _add_time_features(df: pd.DataFrame) -> pd.DataFrame:
     return out.drop(columns=["hour", "dow"])
 
 
-def _handle_negative_values(
+def _apply_negative_policy(
     df: pd.DataFrame,
     policy: str,
 ) -> Tuple[pd.DataFrame, NegativeValueReport]:
     """
-    Handle negative values in generation data.
+    Apply negative value policy (NO INVESTIGATION - that's EDA's job).
+
+    This function ONLY applies the policy. Investigation should be done
+    in eda.py before calling dataset builder.
 
     Physical Reality:
     - Renewable energy generation CANNOT be negative
-    - Negative values are ALWAYS data quality issues:
-      * Net generation accounting (gross - auxiliary)
-      * Metering errors
-      * Data reporting issues
+    - Negative values are ALWAYS data quality issues
 
     Policies:
-    - clamp_to_zero: Set negatives to 0 (RECOMMENDED for forecasting)
-    - investigate: Raise error with diagnostics (for initial exploration)
-    - pass_through: No modification (not recommended)
+    - clamp_to_zero: Set negatives to 0 (RECOMMENDED from EDA)
+    - investigate: Fail with message to run EDA first
+    - pass_through: No modification (if EDA recommends)
 
     Args:
         df: DataFrame with [unique_id, ds, y]
-        policy: How to handle negatives
+        policy: Policy to apply (from EDA recommendations)
 
     Returns:
         (processed_df, report)
@@ -136,6 +136,9 @@ def _handle_negative_values(
     neg_mask = df['y'] < 0
     neg_count = int(neg_mask.sum())
     total_rows = len(df)
+
+    # DEBUG: Log what we're working with
+    logger.debug(f"[_apply_negative_policy] Processing {total_rows} rows, found {neg_count} negatives")
 
     # Build report
     by_series = {}
@@ -149,24 +152,28 @@ def _handle_negative_values(
 
             by_series[uid] = {
                 'count': int(series_mask.sum()),
-                'ratio': float(series_mask.sum() / series_total),
                 'min_value': float(series_neg['y'].min()),
                 'max_value': float(series_neg['y'].max()),
-                'mean_value': float(series_neg['y'].mean()),
             }
 
-            # Collect samples for reporting
-            for _, row in series_neg.head(5).iterrows():
+            # Just a few samples for audit
+            for _, row in series_neg.head(3).iterrows():
                 samples.append({
                     'unique_id': row['unique_id'],
                     'ds': str(row['ds']),
                     'y': float(row['y']),
                 })
 
+    # Calculate negative ratio
+    negative_ratio = float(neg_count / total_rows) if total_rows > 0 else 0.0
+
+    # DEBUG: Log report creation
+    logger.debug(f"[_apply_negative_policy] Creating report: {neg_count}/{total_rows} = {negative_ratio:.2%} negatives")
+
     report = NegativeValueReport(
         total_negative_count=neg_count,
         total_rows=total_rows,
-        negative_ratio=float(neg_count / total_rows) if total_rows > 0 else 0,
+        negative_ratio=negative_ratio,
         by_series=by_series,
         action_taken=policy,
         samples=samples,
@@ -178,39 +185,25 @@ def _handle_negative_values(
         return df.copy(), report
 
     if policy == 'investigate':
-        # Detailed error for investigation
-        error_msg = (
-            f"\n{'='*80}\n"
-            f"NEGATIVE VALUES DETECTED - Investigation Required\n"
-            f"{'='*80}\n"
-            f"Total negatives: {neg_count} ({report.negative_ratio:.2%})\n"
-            f"Affected series: {list(by_series.keys())}\n\n"
-            f"Sample negative values:\n"
+        raise ValueError(
+            f"NEGATIVE VALUES DETECTED: {neg_count} negatives found.\n"
+            f"Run EDA first to investigate root cause:\n"
+            f"  from src.renewable.eda import run_full_eda\n"
+            f"  recommendations = run_full_eda(generation_df, weather_df, output_dir)\n"
+            f"Then use recommended policy from EDA."
         )
-        for s in samples[:10]:
-            error_msg += f"  {s['unique_id']} @ {s['ds']}: {s['y']:.2f} MWh\n"
-        error_msg += (
-            f"\n{'='*80}\n"
-            f"RECOMMENDATION: Renewable generation cannot be negative.\n"
-            f"These are likely:\n"
-            f"  1. Net generation values (gross - auxiliary load)\n"
-            f"  2. Metering/reporting errors\n"
-            f"\nFor forecasting, use: negative_policy='clamp_to_zero'\n"
-            f"{'='*80}"
-        )
-        raise ValueError(error_msg)
 
     elif policy == 'clamp_to_zero':
-        # Clamp to zero - the physically correct approach for forecasting
         out = df.copy()
         out['y'] = out['y'].clip(lower=0)
-
-        logger.warning(
+        logger.info(
             f"[PREPROCESSING] Clamped {neg_count} negative values to 0 "
-            f"({report.negative_ratio:.2%} of data)"
+            f"({100*neg_count/total_rows:.2f}% of data)"
         )
+
+        # Log per-series
         for uid, info in by_series.items():
-            logger.warning(
+            logger.info(
                 f"  {uid}: {info['count']} negatives clamped "
                 f"(range: [{info['min_value']:.1f}, {info['max_value']:.1f}])"
             )
@@ -219,10 +212,7 @@ def _handle_negative_values(
         return out, report
 
     elif policy == 'pass_through':
-        logger.warning(
-            f"[PREPROCESSING] pass_through policy: {neg_count} negative values NOT modified. "
-            f"This may cause issues with forecasting."
-        )
+        logger.warning(f"[PREPROCESSING] Passing through {neg_count} negative values")
         report.action_taken = 'passed_through'
         return df.copy(), report
 
@@ -348,9 +338,12 @@ def build_modeling_dataset(
     negative_policy: str = 'clamp_to_zero',
     max_missing_ratio: float = 0.02,
     output_dir: Optional[Path] = None,
+    eda_recommendations: Optional['PreprocessingRecommendation'] = None,
 ) -> Tuple[pd.DataFrame, PreprocessingReport]:
     """
     Build modeling-ready dataset from raw data.
+
+    RECOMMENDED: Run EDA first and pass recommendations via eda_recommendations.
 
     Pipeline:
     1. Validate inputs
@@ -362,12 +355,13 @@ def build_modeling_dataset(
     Args:
         generation_df: Raw generation data [unique_id, ds, y]
         weather_df: Raw weather data [ds, region, weather_vars...]
-        negative_policy: How to handle negative values:
+        negative_policy: How to handle negative values (override if no EDA)
             - 'clamp_to_zero': Set to 0 (RECOMMENDED)
             - 'investigate': Fail with diagnostics
             - 'pass_through': No modification
         max_missing_ratio: Max ratio of missing hours before dropping series
         output_dir: Optional directory for detailed reports
+        eda_recommendations: Recommendations from run_full_eda() (PREFERRED)
 
     Returns:
         (modeling_df, preprocessing_report)
@@ -375,6 +369,17 @@ def build_modeling_dataset(
     logger.info("=" * 60)
     logger.info("DATASET BUILDER - Building Modeling Dataset")
     logger.info("=" * 60)
+
+    # Use EDA recommendations if provided
+    if eda_recommendations is not None:
+        negative_policy = eda_recommendations.negative_policy
+        max_missing_ratio = eda_recommendations.max_missing_ratio
+        logger.info("[DATASET_BUILDER] Using EDA recommendations")
+        logger.info(f"  Policy: {negative_policy} (confidence: {eda_recommendations.negative_confidence})")
+        logger.info(f"  Reason: {eda_recommendations.negative_reason}")
+    else:
+        logger.warning("[DATASET_BUILDER] No EDA recommendations - using defaults")
+        logger.warning("  RECOMMENDED: Run EDA first for data-driven decisions")
 
     # Validate inputs
     required_gen = {'unique_id', 'ds', 'y'}
@@ -406,9 +411,9 @@ def build_modeling_dataset(
     logger.info(f"Input: {input_rows:,} rows, {input_series} series")
     logger.info(f"Date range: {input_date_range['start']} to {input_date_range['end']}")
 
-    # Step 1: Handle negative values
-    logger.info(f"\n[1/4] Handling negative values (policy={negative_policy})...")
-    work, neg_report = _handle_negative_values(work, policy=negative_policy)
+    # Step 1: Apply negative value policy
+    logger.info(f"\n[1/4] Applying negative value policy (policy={negative_policy})...")
+    work, neg_report = _apply_negative_policy(work, policy=negative_policy)
 
     # Step 2: Enforce hourly grid
     logger.info(f"\n[2/4] Enforcing hourly grid (max_missing={max_missing_ratio:.1%})...")
@@ -475,6 +480,113 @@ def build_modeling_dataset(
     logger.info("=" * 60)
 
     return work, report
+
+
+# ============================================================================
+# Dataset-Specific Builders
+# ============================================================================
+
+class RenewableDatasetBuilder:
+    """Base class for fuel-type-specific dataset builders."""
+
+    def __init__(
+        self,
+        fuel_type: str,
+        eda_recommendations: Optional['PreprocessingRecommendation'] = None,
+    ):
+        self.fuel_type = fuel_type
+        self.eda_recommendations = eda_recommendations
+        self.config = self._get_default_config()
+
+        if eda_recommendations:
+            self.config['negative_policy'] = eda_recommendations.negative_policy
+            self.config['max_missing_ratio'] = eda_recommendations.max_missing_ratio
+
+    def _get_default_config(self) -> Dict[str, Any]:
+        """Get default config for this fuel type."""
+        return {
+            'negative_policy': 'clamp_to_zero',
+            'max_missing_ratio': 0.02,
+        }
+
+    def build(
+        self,
+        generation_df: pd.DataFrame,
+        weather_df: pd.DataFrame,
+        output_dir: Optional[Path] = None,
+    ) -> Tuple[pd.DataFrame, PreprocessingReport]:
+        """Build dataset using fuel-type-specific logic."""
+
+        # Filter to this fuel type only
+        fuel_series = [uid for uid in generation_df['unique_id'].unique() if self.fuel_type in uid]
+
+        if not fuel_series:
+            raise ValueError(f"No series found for fuel type: {self.fuel_type}")
+
+        filtered_df = generation_df[generation_df['unique_id'].isin(fuel_series)].copy()
+
+        logger.info(f"[{self.fuel_type}_BUILDER] Building dataset for {len(fuel_series)} series")
+
+        return build_modeling_dataset(
+            filtered_df,
+            weather_df,
+            negative_policy=self.config['negative_policy'],
+            max_missing_ratio=self.config['max_missing_ratio'],
+            output_dir=output_dir,
+            eda_recommendations=self.eda_recommendations,
+        )
+
+
+class SolarDatasetBuilder(RenewableDatasetBuilder):
+    """Solar-specific dataset builder."""
+
+    def __init__(self, eda_recommendations: Optional['PreprocessingRecommendation'] = None):
+        super().__init__('SUN', eda_recommendations)
+
+    def _get_default_config(self) -> Dict[str, Any]:
+        config = super()._get_default_config()
+        # Solar: might tolerate slightly more missing data at night
+        config['max_missing_ratio'] = 0.03
+        return config
+
+
+class WindDatasetBuilder(RenewableDatasetBuilder):
+    """Wind-specific dataset builder."""
+
+    def __init__(self, eda_recommendations: Optional['PreprocessingRecommendation'] = None):
+        super().__init__('WND', eda_recommendations)
+
+
+def build_dataset_by_fuel_type(
+    generation_df: pd.DataFrame,
+    weather_df: pd.DataFrame,
+    fuel_type: str,
+    output_dir: Optional[Path] = None,
+    eda_recommendations: Optional['PreprocessingRecommendation'] = None,
+) -> Tuple[pd.DataFrame, PreprocessingReport]:
+    """
+    Factory function to build dataset using appropriate fuel-specific builder.
+
+    Args:
+        generation_df: Raw generation data
+        weather_df: Raw weather data
+        fuel_type: 'SUN' or 'WND'
+        output_dir: Optional output directory
+        eda_recommendations: Optional EDA recommendations
+
+    Returns:
+        (modeling_df, report)
+    """
+    builders = {
+        'SUN': SolarDatasetBuilder,
+        'WND': WindDatasetBuilder,
+    }
+
+    if fuel_type not in builders:
+        raise ValueError(f"Unknown fuel type: {fuel_type}")
+
+    builder = builders[fuel_type](eda_recommendations)
+    return builder.build(generation_df, weather_df, output_dir)
 
 
 if __name__ == "__main__":

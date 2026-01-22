@@ -33,6 +33,7 @@ from src.renewable.eia_renewable import EIARenewableFetcher
 from src.renewable.modeling import (
     RenewableForecastModel,
     compute_baseline_metrics,
+    enforce_physical_constraints,
     WEATHER_VARS,
 )
 from src.renewable.model_interpretability import (
@@ -710,6 +711,11 @@ def generate_renewable_forecasts(
     )
     forecasts = model.predict(future_exog=future_exog, best_model=best_model)
 
+    # CRITICAL: Apply physical constraints (renewable generation cannot be negative)
+    # This matches the constraint enforcement during cross-validation (modeling.py:301)
+    forecasts = enforce_physical_constraints(forecasts, min_value=0.0)
+    logger.info("[generate_forecasts] Applied physical constraints (clipped to [0, ∞))")
+
     logger.info(
         f"[generate_forecasts] Generated {len(forecasts)} forecast rows "
         f"for {forecasts['unique_id'].nunique()} series"
@@ -790,14 +796,17 @@ def compute_renewable_drift(
 def run_full_pipeline(
     config: RenewablePipelineConfig,
     fetch_diagnostics: Optional[list[dict]] = None,
+    skip_eda: bool = False,
 ) -> dict:
     """Run the complete renewable forecasting pipeline.
 
     Steps:
     1. Fetch generation data
     2. Fetch weather data
-    3. Train models (CV)
-    4. Generate forecasts
+    3. Run EDA and get recommendations (NEW)
+    4. Build datasets per fuel type using recommendations
+    5. Train models (CV)
+    6. Generate forecasts
 
     Args:
         config: Pipeline configuration
@@ -833,51 +842,104 @@ def run_full_pipeline(
     weather_df = fetch_renewable_weather(config)
     results["weather_rows"] = len(weather_df)
 
-    # Step 2.5: Build modeling-ready dataset with preprocessing
-    logger.info("[pipeline] Building modeling dataset (dataset_builder.py)")
+    # Step 3: Run EDA (NEW)
+    eda_recommendations = None
 
-    # Map config policy to dataset_builder policy
-    policy_map = {
-        "clamp": "clamp_to_zero",
-        "fail_loud": "investigate",
-        "hybrid": "clamp_to_zero",
-    }
-    negative_policy = policy_map.get(
-        config.negative_policy, "clamp_to_zero"
-    )
+    if not skip_eda:
+        logger.info("[pipeline] Running EDA to generate preprocessing recommendations")
+        from src.renewable.eda import run_full_eda
 
-    modeling_df, prep_report = build_modeling_dataset(
-        generation_df,
-        weather_df,
-        negative_policy=negative_policy,
-        max_missing_ratio=0.02,
-        output_dir=config.preprocessing_dir()
-    )
+        eda_output_dir = Path(config.data_dir) / "eda"
+        eda_recommendations = run_full_eda(
+            generation_df,
+            weather_df,
+            eda_output_dir,
+        )
 
-    # Extract time and weather features from output_features
-    time_features = [
-        f for f in prep_report.output_features
-        if f in ['hour_sin', 'hour_cos', 'dow_sin', 'dow_cos']
-    ]
-    weather_features = [
-        f for f in prep_report.output_features
-        if f in prep_report.weather_vars_used
-    ]
+        results["eda"] = {
+            "output_dir": str(eda_output_dir),
+            "negative_policy": eda_recommendations.preprocessing.negative_policy,
+            "confidence": eda_recommendations.preprocessing.negative_confidence,
+        }
+        logger.info(f"[pipeline] EDA complete. Recommended policy: {eda_recommendations.preprocessing.negative_policy}")
+    else:
+        logger.warning("[pipeline] Skipping EDA - using default preprocessing policies")
 
+    # Step 4: Build datasets per fuel type (MODIFIED)
+    logger.info("[pipeline] Building modeling datasets (fuel-type specific)")
+
+    from src.renewable.dataset_builder import build_dataset_by_fuel_type
+
+    fuel_datasets = {}
+    last_prep_report = None
+
+    for fuel_type in config.fuel_types:
+        logger.info(f"[pipeline] Building {fuel_type} dataset...")
+
+        fuel_output_dir = config.preprocessing_dir() / fuel_type.lower()
+
+        modeling_df_fuel, prep_report = build_dataset_by_fuel_type(
+            generation_df,
+            weather_df,
+            fuel_type=fuel_type,
+            output_dir=fuel_output_dir,
+            eda_recommendations=eda_recommendations.preprocessing if eda_recommendations else None,
+        )
+
+        fuel_datasets[fuel_type] = modeling_df_fuel
+        last_prep_report = prep_report  # Keep last report for backward compatibility
+
+        logger.info(f"[pipeline] {fuel_type}: {prep_report.input_rows:,} → {prep_report.output_rows:,} rows")
+
+    # Combine all fuel datasets
+    modeling_df = pd.concat(fuel_datasets.values(), ignore_index=True)
+
+    # DEBUG: Log dataset combination
+    logger.info(f"[pipeline] Combined {len(fuel_datasets)} fuel-type datasets into {len(modeling_df):,} rows")
+
+    # Save combined modeling dataset for analysis and testing
+    modeling_dataset_path = Path(config.data_dir) / "modeling_dataset.parquet"
+    modeling_df.to_parquet(modeling_dataset_path, index=False)
+    logger.info(f"[pipeline] Saved modeling dataset: {modeling_dataset_path} ({len(modeling_df):,} rows)")
+
+    # Initialize preprocessing results
     results["preprocessing"] = {
-        "rows_input": prep_report.input_rows,
-        "rows_output": prep_report.output_rows,
-        "series_dropped": len(prep_report.series_dropped_incomplete),
-        "negative_action": prep_report.negative_report.action_taken,
-        "time_features": time_features,
-        "weather_features": weather_features,
+        "rows_input": len(generation_df),
+        "rows_output": len(modeling_df),
     }
-    logger.info(
-        f"[pipeline] Preprocessing: {prep_report.input_rows:,} → "
-        f"{prep_report.output_rows:,} rows"
-    )
 
-    # Step 3: Train and validate (on preprocessed data)
+    # Use last report for backward compatibility
+    prep_report = last_prep_report
+
+    # Extract time and weather features from output_features (from last fuel type)
+    if prep_report:
+        logger.debug("[pipeline] Extracting features from last fuel type's preprocessing report")
+
+        time_features = [
+            f for f in prep_report.output_features
+            if f in ['hour_sin', 'hour_cos', 'dow_sin', 'dow_cos']
+        ]
+        weather_features = [
+            f for f in prep_report.output_features
+            if f in prep_report.weather_vars_used
+        ]
+
+        logger.debug(f"[pipeline] Found {len(time_features)} time features, {len(weather_features)} weather features")
+
+        results["preprocessing"].update({
+            "series_dropped": len(prep_report.series_dropped_incomplete),
+            "negative_action": prep_report.negative_report.action_taken,
+            "time_features": time_features,
+            "weather_features": weather_features,
+        })
+        logger.info(
+            f"[pipeline] Preprocessing: {len(generation_df):,} → "
+            f"{len(modeling_df):,} rows"
+        )
+    else:
+        logger.warning("[pipeline] No preprocessing report available - skipping feature extraction")
+
+    # Step 5: Train and validate (on preprocessed data)
     cv_results, leaderboard, baseline = train_renewable_models(
         config, modeling_df
     )
@@ -888,7 +950,7 @@ def run_full_pipeline(
     # Save full leaderboard for dashboard display
     results["leaderboard"] = leaderboard.to_dict(orient="records")
 
-    # Step 4: Generate forecasts (use the best model from CV)
+    # Step 6: Generate forecasts (use the best model from CV)
     # Pass weather_df for future weather (forecast horizon)
     forecasts = generate_renewable_forecasts(
         config, modeling_df, weather_df, best_model=best_model

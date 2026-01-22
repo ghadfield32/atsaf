@@ -319,7 +319,11 @@ class EIARenewableFetcher:
             RuntimeError: If no regions could be fetched (complete failure)
         """
         if regions is None:
-            regions = [r for r in REGIONS.keys() if r != "US48"]
+            # Only include regions with configured EIA respondent (exclude US48 and None)
+            regions = [
+                code for code, info in REGIONS.items()
+                if code != "US48" and info.eia_respondent is not None
+            ]
 
         all_dfs: list[pd.DataFrame] = []
         failed_regions: list[tuple[str, str]] = []  # (region, error_msg)

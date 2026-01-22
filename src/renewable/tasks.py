@@ -32,7 +32,6 @@ except ImportError:
 from src.renewable.eia_renewable import EIARenewableFetcher
 from src.renewable.modeling import (
     RenewableForecastModel,
-    _log_series_summary,
     _add_time_features,
     compute_baseline_metrics,
     WEATHER_VARS,
@@ -166,7 +165,7 @@ def fetch_renewable_data(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _log_generation_summary(df: pd.DataFrame, source: str) -> None:
-        _log_series_summary(df, value_col="y", label=f"generation_data_{source}")
+
 
         expected_series = {
             f"{region}_{fuel}" for region in config.regions for fuel in config.fuel_types

@@ -465,6 +465,7 @@ def build_modeling_dataset(
         report_file = output_dir / 'preprocessing_report.json'
         with open(report_file, 'w') as f:
             json.dump(report_dict, f, indent=2, default=str)
+            f.write('\n')  # POSIX standard: files should end with newline
         logger.info(f"\n[REPORT] Saved to: {report_file}")
 
     logger.info("\n" + "=" * 60)

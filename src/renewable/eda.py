@@ -260,6 +260,7 @@ class NegativeValueInvestigation:
         report_file = output_dir / 'negative_investigation.json'
         with open(report_file, 'w') as f:
             json.dump(report, f, indent=2, default=str)
+            f.write('\n')  # POSIX standard: files should end with newline
 
         # Generate visualizations if negatives exist
         if summary['negative_count'] > 0:
@@ -490,6 +491,7 @@ def run_full_eda(
     report_file = report_dir / 'eda_report.json'
     with open(report_file, 'w') as f:
         json.dump(results, f, indent=2, default=str)
+        f.write('\n')  # POSIX standard: files should end with newline
 
     print("\n" + "=" * 80)
     print(f"[SUCCESS] EDA complete. Report saved to: {report_dir}")
@@ -651,6 +653,7 @@ def _analyze_weather_alignment(
     # Save results
     with open(output_dir / 'weather_analysis.json', 'w') as f:
         json.dump(results, f, indent=2)
+        f.write('\n')  # POSIX standard: files should end with newline
 
     return results
 

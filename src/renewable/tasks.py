@@ -19,10 +19,19 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+# Optional imports for interpretability (LightGBM + skforecast)
+try:
+    from lightgbm import LGBMRegressor
+    from skforecast.recursive import ForecasterRecursive
+    INTERPRETABILITY_AVAILABLE = True
+except ImportError:
+    INTERPRETABILITY_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("lightgbm and/or skforecast not installed - interpretability features unavailable")
+
 from src.renewable.eia_renewable import EIARenewableFetcher
 from src.renewable.modeling import (
     RenewableForecastModel,
-    RenewableLGBMForecaster,
     _log_series_summary,
     _add_time_features,
     compute_baseline_metrics,
@@ -522,20 +531,30 @@ def train_interpretability_models(
 
         # Fit LightGBM forecaster
         try:
-            lgbm = RenewableLGBMForecaster(
-                horizon=config.horizon,
+            if not INTERPRETABILITY_AVAILABLE:
+                logger.warning(f"[train_interpretability] {uid}: lightgbm/skforecast not available, skipping")
+                continue
+
+            # Create skforecast ForecasterRecursive with LightGBM estimator
+            forecaster = ForecasterRecursive(
+                estimator=LGBMRegressor(
+                    random_state=42,
+                    verbose=-1,
+                    n_estimators=100,
+                    learning_rate=0.05,
+                    max_depth=6,
+                ),
                 lags=168,  # 7 days of lags
-                rolling_window_sizes=[24, 168],  # 1 day, 1 week
             )
-            lgbm.fit(y=y, exog=exog)
+            forecaster.fit(y=y, exog=exog)
 
             # Create training matrices for SHAP analysis
-            X_train, y_train = lgbm.create_train_X_y(y=y, exog=exog)
+            X_train, y_train = forecaster.create_train_X_y(y=y, exog=exog)
 
             # Generate interpretability report
             series_output_dir = output_dir / uid
             report = generate_full_interpretability_report(
-                forecaster=lgbm.forecaster,
+                forecaster=forecaster,
                 X_train=X_train,
                 series_id=uid,
                 output_dir=series_output_dir,

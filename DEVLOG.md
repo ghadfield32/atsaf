@@ -1,5 +1,98 @@
 # Development Log
 
+## 2026-01-22: JSON Files Missing Trailing Newlines - POSIX Compliance Fix
+
+### Problem - end-of-file-fixer Pre-commit Hook Failing
+
+**Symptom**: Pre-commit hook `end-of-file-fixer` modifying JSON files and blocking commits
+
+**Error Output**:
+```diff
+-}
+\ No newline at end of file
++}
+```
+
+**Root Cause**: Python's `json.dump()` does NOT add trailing newlines, violating POSIX standard
+
+### POSIX Standard Requirement
+Text files MUST end with a newline character (`\n`). This is not "defensive coding" - it's following Unix/POSIX standards:
+- **Why**: Many Unix tools expect newlines (wc, cat, tail, etc.)
+- **Git**: Cleaner diffs when files end with newlines
+- **Standards**: POSIX defines a line as "a sequence of zero or more non-newline characters plus a terminating newline"
+
+### Verification of Root Cause
+```python
+import json
+with open('test.json', 'w') as f:
+    json.dump({'test': 'value'}, f, indent=2)
+# File ends with: }█  (no newline)
+
+with open('test.json', 'rb') as f:
+    print(f.read()[-1:])  # b'}' not b'\n'
+```
+
+### Resolution
+
+**Fix: Add `f.write('\n')` after each `json.dump()` call**
+
+**Files Modified**:
+1. `src/renewable/eda.py` - 3 locations:
+   ```python
+   # Line 262 (negative_investigation.json)
+   json.dump(report, f, indent=2, default=str)
+   f.write('\n')  # Added
+
+   # Line 492 (eda_report.json)
+   json.dump(results, f, indent=2, default=str)
+   f.write('\n')  # Added
+
+   # Line 653 (weather_analysis.json)
+   json.dump(results, f, indent=2)
+   f.write('\n')  # Added
+   ```
+
+2. `src/renewable/dataset_builder.py` - 1 location:
+   ```python
+   # Line 467 (preprocessing_report.json)
+   json.dump(report_dict, f, indent=2, default=str)
+   f.write('\n')  # Added
+   ```
+
+3. **Fixed 36 existing JSON report files**:
+   ```bash
+   # Added newlines to existing files in reports/renewable/eda/
+   python -c "fix_existing_json_files.py"
+   # Result: 36/37 files needed fixes
+   ```
+
+### Validation
+```bash
+✓ pre-commit run end-of-file-fixer --all-files  # Passed
+✓ pre-commit run --all-files                    # All hooks passed
+✓ python -m py_compile src/renewable/*.py        # Compiled successfully
+```
+
+### Files Changed
+- `src/renewable/eda.py` - Added newlines after 3 json.dump() calls
+- `src/renewable/dataset_builder.py` - Added newline after 1 json.dump() call
+- `reports/renewable/eda/**/*.json` - Fixed 36 existing report files
+
+### Best Practice Going Forward
+**Always add newline after json.dump():**
+```python
+# CORRECT
+with open('file.json', 'w') as f:
+    json.dump(data, f, indent=2)
+    f.write('\n')  # POSIX compliance
+
+# WRONG
+with open('file.json', 'w') as f:
+    json.dump(data, f, indent=2)  # Missing newline
+```
+
+---
+
 ## 2026-01-22: Pipeline Integration Fixes - API Mismatch Resolution
 
 ### Problem - tasks.py Using Outdated API Signatures
@@ -1174,3 +1267,6 @@ Always verify naming conventions with downstream consumers before implementing c
 | 2026-01-22 | tasks.py | Added numpy import for time feature calculations in generate_renewable_forecasts() |
 | 2026-01-22 | tasks.py | generate_renewable_forecasts() now builds future_exog with time features and weather |
 | 2026-01-22 | eda.py | Fixed trailing whitespace on lines 283, 322, 520, 532, 533, 580, 621 (pre-commit hook) |
+| 2026-01-22 | eda.py | Added trailing newlines after json.dump() (lines 263, 493, 654) for POSIX compliance |
+| 2026-01-22 | dataset_builder.py | Added trailing newline after json.dump() (line 468) for POSIX compliance |
+| 2026-01-22 | reports/*.json | Fixed 36 existing JSON report files missing trailing newlines (end-of-file-fixer) |

@@ -202,7 +202,8 @@ def fetch_renewable_data(
 
     logger.info(f"[fetch_generation] Fetching {config.fuel_types} for {config.regions}")
 
-    fetcher = EIARenewableFetcher()
+    # Use longer timeout (90s) to handle slow EIA API responses
+    fetcher = EIARenewableFetcher(timeout=90)
     all_dfs = []
 
     for fuel_type in config.fuel_types:

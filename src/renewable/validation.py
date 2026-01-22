@@ -53,25 +53,41 @@ def validate_generation_df(
             {"bad_y": int(work["y"].isna().sum())},
         )
 
+    # Check for negative values and log warning (but allow to pass)
+    # Dataset builder will handle negatives according to configured policy
     if (work["y"] < 0).any():
+        import logging
+        logger = logging.getLogger(__name__)
+
         neg_mask = work["y"] < 0
+        neg_count = int(neg_mask.sum())
         by_series = (
             work[neg_mask]
             .groupby("unique_id")
             .agg(count=("y", "count"), min_y=("y", "min"), max_y=("y", "max"))
             .reset_index()
-            .to_dict(orient="records")
         )
-        sample = (
-            work.loc[neg_mask, ["unique_id", "ds", "y"]]
-            .head(10)
-            .to_dict(orient="records")
+
+        logger.warning(
+            "[validation][NEGATIVE] Found %d negative values (%.1f%%) across %d series",
+            neg_count,
+            100 * neg_count / len(work),
+            len(by_series)
         )
-        return ValidationReport(
-            False,
-            "Negative generation values found",
-            {"neg_y": int(neg_mask.sum()), "by_series": by_series, "sample": sample},
+
+        for _, row in by_series.iterrows():
+            logger.warning(
+                "  Series %s: %d negative values, range=[%.1f, %.1f]",
+                row["unique_id"], row["count"], row["min_y"], row["max_y"]
+            )
+
+        logger.info(
+            "[validation][NEGATIVE] Negatives will be handled by dataset builder "
+            "according to configured negative_policy"
         )
+
+        # Continue validation instead of failing
+        # (Dataset builder will handle negatives per policy)
 
     dup = work.duplicated(subset=["unique_id", "ds"]).sum()
     if dup:

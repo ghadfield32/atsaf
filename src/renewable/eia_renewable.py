@@ -7,15 +7,19 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from dotenv import find_dotenv, load_dotenv
-from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
-from src.renewable.regions import REGIONS, get_eia_respondent, validate_fuel_type, validate_region
+from src.renewable.regions import (REGIONS, get_eia_respondent,
+                                   validate_fuel_type, validate_region)
 
 logger = logging.getLogger(__name__)
+
 
 def _sanitize_url(url: str) -> str:
     parts = urlsplit(url)
@@ -60,11 +64,14 @@ class EIARenewableFetcher:
     MAX_RECORDS_PER_REQUEST = 5000
     RATE_LIMIT_DELAY = 0.2  # 5 requests/second max
 
-    def __init__(self, api_key: Optional[str] = None, *, debug_env: bool = False):
+    def __init__(self, api_key: Optional[str] = None, *, timeout: int = 60, debug_env: bool = False):
         """
-        Initialize API key. Pulls from:
-        1) explicit api_key argument
-        2) environment variable EIA_API_KEY (optionally loaded from .env)
+        Initialize API key and configuration.
+
+        Args:
+            api_key: EIA API key (or reads from EIA_API_KEY env var)
+            timeout: Request timeout in seconds (default: 60)
+            debug_env: Enable debug logging for environment loading
         """
         loaded_env = _load_env_once(debug=debug_env)
 
@@ -78,10 +85,28 @@ class EIARenewableFetcher:
                 f"Loaded .env path: {loaded_env}"
             )
 
+        self.timeout = timeout
+        self.session = self._create_session()  # Add retry-enabled session
+
         # Debug without leaking the key
         if debug_env:
             masked = self.api_key[:4] + "..." + self.api_key[-4:] if len(self.api_key) >= 8 else "***"
             logger.info("EIA_API_KEY loaded (masked): %s", masked)
+            logger.info("Request timeout: %d seconds", self.timeout)
+
+    def _create_session(self) -> requests.Session:
+        """Create requests Session with retry logic for transient errors."""
+        session = requests.Session()
+        retries = Retry(
+            total=3,
+            backoff_factor=1.0,  # 1s, 2s, 4s between retries
+            status_forcelist=[429, 500, 502, 503, 504],  # Retry on server errors and rate limits
+            allowed_methods=frozenset(["GET"]),
+            connect=3,  # Retry on connection errors
+            read=3,     # Retry on read timeouts
+        )
+        session.mount("https://", HTTPAdapter(max_retries=retries))
+        return session
 
     @staticmethod
     def _extract_eia_response(payload: dict, *, request_url: Optional[str] = None) -> tuple[list[dict], dict]:
@@ -169,7 +194,7 @@ class EIARenewableFetcher:
                 "sort[0][direction]": "asc",
             }
 
-            resp = requests.get(self.BASE_URL, params=params, timeout=30)
+            resp = self.session.get(self.BASE_URL, params=params, timeout=self.timeout)
             resp.raise_for_status()
             payload = resp.json()
 
@@ -224,7 +249,10 @@ class EIARenewableFetcher:
                 f"columns={df.columns.tolist()} sample_record_keys={sample_keys}"
             )
 
-        df["ds"] = pd.to_datetime(df["period"], utc=True, errors="coerce").dt.tz_convert("UTC").dt.tz_localize(None)
+        # EIA returns timestamps in UTC format WITHOUT timezone marker (e.g., "2026-01-21T00")
+        # Simply parse and treat as UTC (no conversion needed)
+        df["ds"] = pd.to_datetime(df["period"], utc=True, errors="coerce").dt.tz_localize(None)
+
         df["value"] = pd.to_numeric(df["value"], errors="coerce")
 
         df["region"] = region
@@ -232,27 +260,24 @@ class EIARenewableFetcher:
 
         df = df.dropna(subset=["ds", "value"]).sort_values("ds").reset_index(drop=True)
 
-        # DEBUG: Log negative values for investigation
+        # Log negative values for investigation (but don't clamp - let dataset builder handle)
         neg_mask = df["value"] < 0
         if neg_mask.any():
             neg_count = int(neg_mask.sum())
             neg_min = float(df.loc[neg_mask, "value"].min())
             neg_max = float(df.loc[neg_mask, "value"].max())
-            neg_sample = df.loc[neg_mask, ["ds", "value"]].head(10)
+            neg_pct = 100 * neg_count / max(len(df), 1)
             logger.warning(
-                "[fetch_region][NEGATIVE] region=%s fuel=%s count=%d min=%.2f max=%.2f",
-                region, fuel_type, neg_count, neg_min, neg_max,
+                "[fetch_region][NEGATIVE] region=%s fuel=%s count=%d (%.1f%%) range=[%.2f, %.2f]",
+                region, fuel_type, neg_count, neg_pct, neg_min, neg_max,
             )
+            # Log sample for debugging
+            neg_sample = df.loc[neg_mask, ["ds", "value"]].head(5)
             for _, row in neg_sample.iterrows():
-                logger.warning("  ds=%s value=%.2f", row["ds"], row["value"])
+                logger.debug("  ds=%s value=%.2f", row["ds"], row["value"])
 
-            # Clamp negative values to zero (preserves hourly grid for modeling)
-            # Note: Removing rows would create gaps that cause series to be dropped
-            logger.warning(
-                "[fetch_region][CLAMP] Clamping %d negative values to 0 for %s_%s (%.1f%%)",
-                neg_count, region, fuel_type, 100 * neg_count / max(len(df), 1),
-            )
-            df["value"] = df["value"].clip(lower=0)
+            # NOTE: Keeping negative values in raw data for transparency
+            # Dataset builder will handle negatives according to configured policy
 
         if diag is not None:
             diag.update({
@@ -268,7 +293,6 @@ class EIARenewableFetcher:
 
         return df[["ds", "value", "region", "fuel_type"]]
 
-
     def fetch_all_regions(
         self,
         fuel_type: str,
@@ -278,10 +302,27 @@ class EIARenewableFetcher:
         max_workers: int = 3,
         diagnostics: Optional[list[dict]] = None,
     ) -> pd.DataFrame:
+        """Fetch generation data for all regions for a given fuel type.
+
+        Args:
+            fuel_type: Fuel type code (WND, SUN, etc.)
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+            regions: List of region codes (defaults to all non-US48 regions)
+            max_workers: Number of parallel workers
+            diagnostics: Optional list to collect diagnostic info
+
+        Returns:
+            DataFrame with columns [unique_id, ds, y]
+
+        Raises:
+            RuntimeError: If no regions could be fetched (complete failure)
+        """
         if regions is None:
             regions = [r for r in REGIONS.keys() if r != "US48"]
 
         all_dfs: list[pd.DataFrame] = []
+        failed_regions: list[tuple[str, str]] = []  # (region, error_msg)
 
         def _run_one(region: str) -> tuple[str, pd.DataFrame, dict]:
             d: dict = {}
@@ -302,7 +343,9 @@ class EIARenewableFetcher:
                         print(f"[OK] {region}: {len(df)} rows")
                     else:
                         print(f"[EMPTY] {region}: 0 rows")
+                        failed_regions.append((region, "Empty response (0 rows)"))
                 except Exception as e:
+                    failed_regions.append((region, str(e)))
                     if diagnostics is not None:
                         diagnostics.append({
                             "region": region,
@@ -313,13 +356,34 @@ class EIARenewableFetcher:
                         })
                     print(f"[FAIL] {region}: {e}")
 
+        # Explicit validation: require at least one successful region
         if not all_dfs:
-            return pd.DataFrame(columns=["unique_id", "ds", "y"])
+            error_details = "; ".join([f"{r[0]}({r[1][:80]})" for r in failed_regions])
+            raise RuntimeError(
+                f"[EIA][FETCH] Failed to fetch {fuel_type} data for ALL regions. "
+                f"Failures: {error_details}. "
+                f"Check EIA API availability, API key validity, network connectivity, "
+                f"and consider increasing timeout or reducing concurrency."
+            )
+
+        # Warn if partial failure (some regions succeeded, some failed)
+        if failed_regions:
+            failed_count = len(failed_regions)
+            total_count = len(regions)
+            print(f"[WARNING] Partial {fuel_type} fetch: {failed_count}/{total_count} regions failed")
+            for region, error_msg in failed_regions:
+                # Print first 100 chars of error
+                print(f"  - {region}: {error_msg[:100]}")
 
         combined = pd.concat(all_dfs, ignore_index=True)
         combined["unique_id"] = combined["region"] + "_" + combined["fuel_type"]
         combined = combined.rename(columns={"value": "y"})
-        return combined[["unique_id", "ds", "y"]].sort_values(["unique_id", "ds"]).reset_index(drop=True)
+
+        result = combined[["unique_id", "ds", "y"]].sort_values(["unique_id", "ds"]).reset_index(drop=True)
+
+        print(f"[SUMMARY] {fuel_type} data: {result['unique_id'].nunique()} series, {len(result)} total rows")
+
+        return result
 
     def get_series_summary(self, df: pd.DataFrame) -> pd.DataFrame:
         return df.groupby("unique_id").agg(

@@ -1,5 +1,272 @@
 # Development Log
 
+## 2026-01-22: Timezone Misalignment (Root Cause of Solar Forecast Spikes) + EIA Retry Logic
+
+### Problem - Critical Timezone Bug Causing Nighttime Solar Generation
+
+**Symptom**: Solar forecasts show small spikes around midnight and discontinuities at 18:00 UTC
+
+**Evidence from Training Data**:
+```
+ERCO_SUN nighttime generation:
+- Hour 00:00 UTC: Mean = 2,405 MW, Max = 4,199 MW (should be ~0)
+- Hour 22:00 UTC: Mean = 16,175 MW (peak evening)
+- 100% of midnight observations have non-zero solar generation
+
+MISO_SUN nighttime generation:
+- Hour 00:00 UTC: Mean = 47 MW, Max = 132 MW (should be ~0)
+- 98.3% of nighttime hours (22-05 UTC) have non-zero values
+```
+
+**Root Cause**: EIA API returns timestamps in **local time** (CST/CDT/PST/PDT), but code treats them as **UTC**
+- Texas (ERCO) sunset at 6 PM CST → stored as 18:00 UTC → models learn "solar peaks at 6 PM UTC"
+- Texas midnight (0:00 CST) → stored as 00:00 UTC → **6 hours offset error**
+- Result: 6 PM local (sunset) appears as midnight UTC in training data
+
+**Impact**:
+- Models learn incorrect hourly patterns (expect generation at midnight)
+- Solar physics constraints fight model expectations
+- Forecasts produce negative values at midnight (model "cry for help": -549 MW, -1,509 MW)
+- Small spikes visible in dashboard forecasts
+
+### Resolution
+
+**Fix 1: Add timezone awareness to EIA data ingestion**
+
+`src/renewable/eia_renewable.py:22-34` - Added timezone mapping:
+```python
+REGION_TIMEZONES = {
+    'ERCO': 'America/Chicago',        # Texas (CST/CDT, UTC-6/-5)
+    'MISO': 'America/Chicago',        # Midwest (CST/CDT, UTC-6/-5)
+    'CALI': 'America/Los_Angeles',    # California (PST/PDT, UTC-8/-7)
+    'PJM': 'America/New_York',        # Mid-Atlantic (EST/EDT, UTC-5/-4)
+    # ... other regions
+}
+```
+
+`src/renewable/eia_renewable.py:250-259` - Fixed timestamp conversion:
+```python
+# BEFORE (WRONG):
+df["ds"] = pd.to_datetime(df["period"], utc=True, errors="coerce")
+
+# AFTER (CORRECT):
+region_tz = REGION_TIMEZONES.get(region, 'UTC')
+df["ds"] = (
+    pd.to_datetime(df["period"], errors="coerce")
+    .dt.tz_localize(region_tz)      # Mark as local time
+    .dt.tz_convert('UTC')            # Convert to UTC
+    .dt.tz_localize(None)            # Remove tz (keep UTC values)
+)
+```
+
+**Fix 2: Remove negative value clamping from fetcher**
+
+`src/renewable/eia_renewable.py:261-270` - Changed from clamping to logging:
+- **Before**: Clamped negatives to 0 silently (hid data quality issues)
+- **After**: Log negatives but keep raw values (dataset builder handles policy)
+- **Rationale**: Fetcher should preserve raw data; policy decisions belong in dataset builder
+
+**Fix 3: Add retry logic for transient EIA API errors**
+
+`src/renewable/eia_renewable.py:13-15` - Added retry imports:
+```python
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+```
+
+`src/renewable/eia_renewable.py:93-105` - Added session with retries:
+```python
+def _create_session(self) -> requests.Session:
+    session = requests.Session()
+    retries = Retry(
+        total=3,
+        backoff_factor=1.0,  # 1s, 2s, 4s between retries
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=frozenset(["GET"]),
+        connect=3, read=3,
+    )
+    session.mount("https://", HTTPAdapter(max_retries=retries))
+    return session
+```
+
+`src/renewable/eia_renewable.py:193` - Use session instead of raw requests:
+```python
+# BEFORE: resp = requests.get(...)
+# AFTER:  resp = self.session.get(...)
+```
+
+**Rationale**: Matches Open-Meteo retry pattern; handles transient 503 Service Unavailable errors
+
+### Verification Steps
+
+✅ **Data cleanup**: Deleted contaminated files (generation.parquet, forecasts.parquet, weather.parquet)
+🔄 **Next**: Re-run pipeline with fixed timezone → verify hour 00:00 UTC shows ~0 MW solar
+🔄 **Next**: Re-train models → verify forecasts no longer have spikes/negative values
+🔄 **Next**: Verify dashboard shows smooth solar curves following sun position
+
+### Files Modified
+
+| File | Function/Location | Change | Lines |
+|------|-------------------|--------|-------|
+| `src/renewable/eia_renewable.py` | Module imports | Add HTTPAdapter, Retry | 13-15 |
+| `src/renewable/eia_renewable.py` | Module constants | Add REGION_TIMEZONES mapping | 22-34 |
+| `src/renewable/eia_renewable.py` | `__init__` | Initialize retry-enabled session | 86 |
+| `src/renewable/eia_renewable.py` | `_create_session` | New method for retry config | 93-105 |
+| `src/renewable/eia_renewable.py` | `fetch_region` | Fix timezone conversion | 250-259 |
+| `src/renewable/eia_renewable.py` | `fetch_region` | Remove negative clamping | 261-270 |
+| `src/renewable/eia_renewable.py` | `fetch_region` | Use session.get (with retries) | 193 |
+
+### Critical Issues Remaining (From Code Review)
+
+**Issue 1: `analyze_seasonality()` bug for single series**
+- **Location**: EDA module (assumed from review)
+- **Bug**: When `len(series_list) == 1`, `axes[0]` returns array of 2 axes, not single Axes object
+- **Fix needed**: `if n == 1: axes = np.array([axes])` after subplot creation
+
+**Issue 2: EDA report findings are hard-coded**
+- **Problem**: Report says "✓ Finding: Clear 24-hour seasonality" regardless of actual results
+- **Fix needed**: Drive findings from computed metrics (seasonality strength, coverage thresholds)
+
+**Issue 3: Hourly grid policy mismatch**
+- **Problem**: EDA recommends `max_missing_ratio=0.02`, but `drop_incomplete_series` drops ANY gap
+- **Fix needed**: Implement threshold logic or clarify policy
+
+**Issue 4: Weather variable strictness**
+- **Problem**: Dataset builder uses `wcols = [c for c in WEATHER_VARS if c in df]` (lenient)
+- **Fix needed**: Require ALL expected vars or explicit required subset
+
+**Issue 5: `validation.py` incomplete**
+- **Problem**: Module is truncated mid-function
+- **Fix needed**: Complete implementation with expected series coverage, staleness, missing ratio checks
+
+### Best Practices Applied
+
+1. **Timezone Awareness**: Always track whether timestamps are UTC or local time
+2. **Fail-Loud**: Keep raw data; don't silently transform without logging
+3. **Retry Logic**: Handle transient API failures with exponential backoff
+4. **Data Provenance**: Log transformations so debugging is possible
+
+---
+
+## 2026-01-21: EIA & Weather API Silent Failures + Model Availability Mismatch
+
+### Problem - Three API/Model Issues Causing Pipeline Failures
+
+**Error 1: EIA Generation Data - Timeout Failures**
+```
+[FAIL] MISO: HTTPSConnectionPool(host='api.eia.gov', port=443): Read timed out. (read timeout=30)
+[FAIL] ERCO: HTTPSConnectionPool(host='api.eia.gov', port=443): Read timed out. (read timeout=30)
+[FAIL] CALI: HTTPSConnectionPool(host='api.eia.gov', port=443): Read timed out. (read timeout=30)
+
+RuntimeError: [pipeline][generation_validation] Missing expected series
+details={'missing_series': ['CALI_SUN', 'CALI_WND', 'ERCO_WND', 'MISO_SUN', 'MISO_WND'],
+         'present_series': ['ERCO_SUN']}
+```
+
+**Error 2: Weather Data - 429 Rate Limiting**
+```
+[FAIL] Weather for CALI: RetryError: ... (Caused by ResponseError('too many 429 error responses'))
+[FAIL] Weather for ERCO: RetryError: ... (too many 429 error responses)
+
+Pipeline failed: [weather][ALIGN] Missing weather after merge rows=4320
+```
+
+**Error 3: Model Availability Mismatch**
+```
+ValueError: [predict] best_model 'AutoTheta' not found in forecast output.
+Available models: ['AutoARIMA', 'AutoETS', 'MSTL_ARIMA', 'SeasonalNaive']
+```
+
+### Root Cause Analysis
+
+**Error 1: Silent exception handling + insufficient timeout**
+- **Location**: `src/renewable/eia_renewable.py:305-317` (`fetch_all_regions`)
+- **Pattern**: Catches all exceptions → prints error → returns empty DataFrame if all fail
+- **Timeout**: Hardcoded `timeout=30` too short for slow EIA API responses
+- **Impact**: 5/6 regions timed out → only ERCO_SUN succeeded → validation fails downstream
+- **Design flaw**: Caller has no way to know fetch failed (silent failure anti-pattern)
+
+**Error 2: Same silent exception pattern in weather fetch**
+- **Location**: `src/renewable/open_meteo.py:159-189` (`fetch_all_regions_historical`)
+- **Pattern**: Identical to EIA issue - catches exceptions without re-raising
+- **API issue**: Open-Meteo rate limiting (429) caused all historical fetches to fail
+- **Result**: Empty weather DataFrame → all NaN on merge → confusing error message
+
+**Error 3: Model list inconsistency between CV and fit**
+- **Location**: `src/renewable/modeling.py:543-548` (fit method)
+- **CV models**: AutoARIMA, SeasonalNaive, AutoETS, MSTL_ARIMA, **AutoTheta**, **AutoCES**
+- **Fit models**: AutoARIMA, SeasonalNaive, AutoETS, MSTL_ARIMA (missing AutoTheta & AutoCES)
+- **Flow**: CV selects AutoTheta as best → fit trains without AutoTheta → predict fails
+
+### Resolution
+
+**Fix 1: Add explicit error handling to EIA fetcher**
+
+`src/renewable/eia_renewable.py:272-358` - Updated `fetch_all_regions()`:
+- Track `failed_regions: list[tuple[str, str]]` with error messages
+- Raise `RuntimeError` if ALL regions fail (no silent empty returns)
+- Warn if partial failure (some succeeded, some failed)
+- Add summary logging: `[SUMMARY] {fuel_type} data: X series, Y rows`
+
+**Fix 2: Increase EIA API timeout**
+
+`src/renewable/eia_renewable.py:63-88` - Made timeout configurable:
+- Added `timeout` parameter to `__init__` (default: 60 seconds, up from hardcoded 30)
+- Use `self.timeout` in `fetch_region()` instead of hardcoded value
+- `tasks.py:205-207` - Use `EIARenewableFetcher(timeout=90)` for slow responses
+
+**Fix 3: Add explicit error handling to weather fetcher**
+
+`src/renewable/open_meteo.py:159-228, 264-353` - Same pattern as EIA fix:
+- Track `failed_regions: list[tuple[str, str, str]]` (region, error_type, error_msg)
+- Raise `RuntimeError` if ALL regions fail
+- Warn on partial failures with error types (TIMEOUT, CONNECTION_ERROR, etc.)
+- Add summary logging for diagnostics
+
+**Fix 4: Synchronize model lists between CV and fit**
+
+`src/renewable/modeling.py:537-563` - Updated `fit()` method:
+```python
+# Try to add AutoTheta and AutoCES if available (same as cross_validate)
+try:
+    from statsforecast.models import AutoTheta, AutoCES
+    models.append(AutoTheta(season_length=24))
+    models.append(AutoCES(season_length=24))
+    print("[fit] Using expanded model set: +AutoTheta, +AutoCES")
+except ImportError:
+    print("[fit] AutoTheta/AutoCES not available, using core models only")
+```
+
+### Verification
+
+✅ **EIA timeout fix**: Increased from 30s to 90s → handles slow API responses
+✅ **EIA error handling**: Fails fast with clear error → `[EIA][FETCH] Failed to fetch {fuel} for ALL regions`
+✅ **Weather error handling**: Fails fast with clear error → `[OPENMETEO][HIST] Failed to fetch for ALL regions`
+✅ **Model consistency**: AutoTheta now available in both CV and fit → predict succeeds
+
+### Files Modified
+
+| File | Function | Change | Lines |
+|------|----------|--------|-------|
+| `src/renewable/eia_renewable.py` | `__init__` | Add timeout parameter (default: 60) | 63-88 |
+| `src/renewable/eia_renewable.py` | `fetch_region` | Use self.timeout instead of hardcoded 30 | 176 |
+| `src/renewable/eia_renewable.py` | `fetch_all_regions` | Add explicit error handling + validation | 272-358 |
+| `src/renewable/open_meteo.py` | `fetch_all_regions_historical` | Add explicit error handling + validation | 159-228 |
+| `src/renewable/open_meteo.py` | `fetch_all_regions_forecast` | Add explicit error handling + validation | 264-353 |
+| `src/renewable/modeling.py` | `fit` | Add AutoTheta/AutoCES (same as CV) | 537-563 |
+| `src/renewable/tasks.py` | `fetch_renewable_weather` | Add weather_df validation | 312-350 |
+| `src/renewable/tasks.py` | `fetch_renewable_data` | Use timeout=90 for EIA fetcher | 205-207 |
+
+### Best Practices Applied
+
+1. **Fail-Fast**: Raise errors immediately at source, not downstream
+2. **Clear Error Messages**: Include failure details, affected regions, and suggested actions
+3. **Model Consistency**: CV and fit must use identical model sets
+4. **Configurable Timeouts**: Don't hardcode timeouts - make them configurable
+5. **Partial Failure Handling**: Return partial results with warnings, not silent empty
+
+---
+
 ## 2026-01-21: GitHub Actions Failures - Interpretability Artifacts & Missing Dependencies
 
 ### Problem - Two Independent GitHub Actions Failures

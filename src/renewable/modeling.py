@@ -36,15 +36,14 @@ This module provides two model paths for renewable energy forecasting:
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
+from typing import Any, Optional, Sequence
+
 import numpy as np
 import pandas as pd
-from dataclasses import dataclass
-from typing import Optional, Sequence
-import re
-from typing import Any
 
 from src.chapter2.evaluation import ForecastMetrics
-
 
 WEATHER_VARS = [
     "temperature_2m",
@@ -536,7 +535,8 @@ class RenewableForecastModel:
 
     def fit(self, df: pd.DataFrame, weather_df: Optional[pd.DataFrame] = None) -> None:
         from statsforecast import StatsForecast
-        from statsforecast.models import AutoARIMA, SeasonalNaive, AutoETS, MSTL
+        from statsforecast.models import (MSTL, AutoARIMA, AutoETS,
+                                          SeasonalNaive)
 
         train_df = self.prepare_training_df(df, weather_df)
 
@@ -546,6 +546,15 @@ class RenewableForecastModel:
             AutoETS(season_length=24),
             MSTL(season_length=[24, 168], trend_forecaster=AutoARIMA(), alias="MSTL_ARIMA"),
         ]
+
+        # Try to add AutoTheta and AutoCES if available (same as cross_validate)
+        try:
+            from statsforecast.models import AutoCES, AutoTheta
+            models.append(AutoTheta(season_length=24))
+            models.append(AutoCES(season_length=24))
+            print("[fit] Using expanded model set: +AutoTheta, +AutoCES")
+        except ImportError:
+            print("[fit] AutoTheta/AutoCES not available, using core models only")
 
         self.sf = StatsForecast(models=models, freq="h", n_jobs=-1)
         self._train_df = train_df
@@ -727,7 +736,8 @@ class RenewableForecastModel:
         expanded_models: bool = True,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         from statsforecast import StatsForecast
-        from statsforecast.models import AutoARIMA, SeasonalNaive, AutoETS, MSTL
+        from statsforecast.models import (MSTL, AutoARIMA, AutoETS,
+                                          SeasonalNaive)
 
         train_df = self.prepare_training_df(df, weather_df)
 
@@ -742,7 +752,7 @@ class RenewableForecastModel:
         # Add expanded models if requested
         if expanded_models:
             try:
-                from statsforecast.models import AutoTheta, AutoCES
+                from statsforecast.models import AutoCES, AutoTheta
                 models.extend([
                     AutoTheta(season_length=24),
                     AutoCES(season_length=24),
@@ -814,8 +824,8 @@ class RenewableLGBMForecaster:
         # Import here to make dependencies optional
         try:
             from lightgbm import LGBMRegressor
-            from skforecast.recursive import ForecasterRecursive
             from skforecast.preprocessing import RollingFeatures
+            from skforecast.recursive import ForecasterRecursive
         except ImportError as e:
             raise ImportError(
                 "LightGBM forecaster requires: lightgbm, skforecast. "

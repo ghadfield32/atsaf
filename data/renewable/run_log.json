@@ -1,5 +1,5 @@
 {
-  "run_at_utc": "2026-01-22T19:53:51.587690+00:00",
+  "run_at_utc": "2026-01-22T20:54:16.089056+00:00",
   "config": {
     "regions": [
       "CALI",
@@ -21,7 +21,7 @@
   "pipeline_results": {
     "generation_rows": 4358,
     "series_count": 6,
-    "weather_rows": 2364,
+    "weather_rows": 2367,
     "preprocessing": {
       "rows_input": 4358,
       "rows_output": 4358,
@@ -177,6 +177,16 @@
         "empty": false
       },
       {
+        "region": "ERCO",
+        "fuel_type": "SUN",
+        "start_date": "2025-12-23",
+        "end_date": "2026-01-22",
+        "total_records": 726,
+        "pages": 1,
+        "rows_parsed": 726,
+        "empty": false
+      },
+      {
         "region": "CALI",
         "fuel_type": "SUN",
         "start_date": "2025-12-23",
@@ -195,16 +205,6 @@
         "pages": 1,
         "rows_parsed": 725,
         "empty": false
-      },
-      {
-        "region": "ERCO",
-        "fuel_type": "SUN",
-        "start_date": "2025-12-23",
-        "end_date": "2026-01-22",
-        "total_records": 726,
-        "pages": 1,
-        "rows_parsed": 726,
-        "empty": false
       }
     ]
   },
@@ -215,7 +215,7 @@
       "row_count": 4358,
       "series_count": 6,
       "max_ds": "2026-01-22T07:00:00+00:00",
-      "lag_hours": 12.0,
+      "lag_hours": 13.0,
       "worst_missing_ratio": 0.0
     }
   },
@@ -252,6 +252,16 @@
         "empty": false
       },
       {
+        "region": "ERCO",
+        "fuel_type": "SUN",
+        "start_date": "2025-12-23",
+        "end_date": "2026-01-22",
+        "total_records": 726,
+        "pages": 1,
+        "rows_parsed": 726,
+        "empty": false
+      },
+      {
         "region": "CALI",
         "fuel_type": "SUN",
         "start_date": "2025-12-23",
@@ -269,16 +279,6 @@
         "total_records": 725,
         "pages": 1,
         "rows_parsed": 725,
-        "empty": false
-      },
-      {
-        "region": "ERCO",
-        "fuel_type": "SUN",
-        "start_date": "2025-12-23",
-        "end_date": "2026-01-22",
-        "total_records": 726,
-        "pages": 1,
-        "rows_parsed": 726,
         "empty": false
       }
     ],

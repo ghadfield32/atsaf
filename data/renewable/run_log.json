@@ -1,5 +1,5 @@
 {
-  "run_at_utc": "2026-01-23T17:49:44.898788+00:00",
+  "run_at_utc": "2026-01-23T19:52:14.813512+00:00",
   "config": {
     "regions": [
       "CALI",
@@ -21,7 +21,7 @@
   "pipeline_results": {
     "generation_rows": 4358,
     "series_count": 6,
-    "weather_rows": 2358,
+    "weather_rows": 2364,
     "eda": {
       "output_dir": "data/renewable/eda",
       "negative_policy": "clamp_to_zero",
@@ -162,16 +162,6 @@
         "empty": false
       },
       {
-        "region": "ERCO",
-        "fuel_type": "WND",
-        "start_date": "2025-12-24",
-        "end_date": "2026-01-23",
-        "total_records": 726,
-        "pages": 1,
-        "rows_parsed": 726,
-        "empty": false
-      },
-      {
         "region": "MISO",
         "fuel_type": "WND",
         "start_date": "2025-12-24",
@@ -179,6 +169,16 @@
         "total_records": 725,
         "pages": 1,
         "rows_parsed": 725,
+        "empty": false
+      },
+      {
+        "region": "ERCO",
+        "fuel_type": "WND",
+        "start_date": "2025-12-24",
+        "end_date": "2026-01-23",
+        "total_records": 726,
+        "pages": 1,
+        "rows_parsed": 726,
         "empty": false
       },
       {
@@ -220,7 +220,7 @@
       "row_count": 4358,
       "series_count": 6,
       "max_ds": "2026-01-23T07:00:00+00:00",
-      "lag_hours": 10.0,
+      "lag_hours": 12.0,
       "worst_missing_ratio": 0.0
     }
   },
@@ -237,16 +237,6 @@
         "empty": false
       },
       {
-        "region": "ERCO",
-        "fuel_type": "WND",
-        "start_date": "2025-12-24",
-        "end_date": "2026-01-23",
-        "total_records": 726,
-        "pages": 1,
-        "rows_parsed": 726,
-        "empty": false
-      },
-      {
         "region": "MISO",
         "fuel_type": "WND",
         "start_date": "2025-12-24",
@@ -254,6 +244,16 @@
         "total_records": 725,
         "pages": 1,
         "rows_parsed": 725,
+        "empty": false
+      },
+      {
+        "region": "ERCO",
+        "fuel_type": "WND",
+        "start_date": "2025-12-24",
+        "end_date": "2026-01-23",
+        "total_records": 726,
+        "pages": 1,
+        "rows_parsed": 726,
         "empty": false
       },
       {

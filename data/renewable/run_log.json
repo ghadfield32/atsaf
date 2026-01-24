@@ -1,5 +1,5 @@
 {
-  "run_at_utc": "2026-01-24T13:49:07.616285+00:00",
+  "run_at_utc": "2026-01-24T14:45:04.328860+00:00",
   "config": {
     "regions": [
       "CALI",
@@ -21,7 +21,7 @@
   "pipeline_results": {
     "generation_rows": 4326,
     "series_count": 6,
-    "weather_rows": 2346,
+    "weather_rows": 2349,
     "eda": {
       "output_dir": "data/renewable/eda",
       "negative_policy": "clamp_to_zero",
@@ -49,38 +49,30 @@
       ]
     },
     "best_model": "AutoETS",
-    "best_rmse": 4916.7896291059715,
+    "best_rmse": 4916.789629105971,
     "baseline": {
       "model": "AutoETS",
-      "rmse_mean": 3472.3771610766526,
-      "rmse_std": 3635.794339835862,
-      "drift_threshold_rmse": 10743.965840748377,
+      "rmse_mean": 3472.3771610766635,
+      "rmse_std": 3635.7943398358507,
+      "drift_threshold_rmse": 10743.965840748366,
       "n_windows": 12
     },
     "leaderboard": [
       {
         "model": "AutoETS",
-        "rmse": 4916.7896291059715,
-        "mae": 2679.294192140225,
+        "rmse": 4916.789629105971,
+        "mae": 2679.2941921402435,
         "valid_rows": 288,
         "coverage_80": 0.8020833333333334,
         "coverage_95": 0.8784722222222222
       },
       {
         "model": "AutoARIMA",
-        "rmse": 5078.446279202799,
-        "mae": 3233.5168538131365,
+        "rmse": 5019.6055138801485,
+        "mae": 3210.8030407776496,
         "valid_rows": 288,
-        "coverage_80": 0.7847222222222222,
+        "coverage_80": 0.7916666666666666,
         "coverage_95": 0.9270833333333334
-      },
-      {
-        "model": "MSTL_ARIMA",
-        "rmse": 5409.76534114277,
-        "mae": 2980.269414425605,
-        "valid_rows": 288,
-        "coverage_80": 0.625,
-        "coverage_95": 0.8090277777777778
       },
       {
         "model": "AutoTheta",
@@ -89,6 +81,14 @@
         "valid_rows": 288,
         "coverage_80": 0.7881944444444444,
         "coverage_95": 0.8645833333333334
+      },
+      {
+        "model": "MSTL_ARIMA",
+        "rmse": 5471.872379431707,
+        "mae": 3019.509884397934,
+        "valid_rows": 288,
+        "coverage_80": 0.6076388888888888,
+        "coverage_95": 0.8090277777777778
       },
       {
         "model": "SeasonalNaive",
@@ -152,26 +152,6 @@
     },
     "fetch_diagnostics": [
       {
-        "region": "CALI",
-        "fuel_type": "WND",
-        "start_date": "2025-12-25",
-        "end_date": "2026-01-24",
-        "total_records": 721,
-        "pages": 1,
-        "rows_parsed": 721,
-        "empty": false
-      },
-      {
-        "region": "ERCO",
-        "fuel_type": "WND",
-        "start_date": "2025-12-25",
-        "end_date": "2026-01-24",
-        "total_records": 721,
-        "pages": 1,
-        "rows_parsed": 721,
-        "empty": false
-      },
-      {
         "region": "MISO",
         "fuel_type": "WND",
         "start_date": "2025-12-25",
@@ -183,6 +163,26 @@
       },
       {
         "region": "ERCO",
+        "fuel_type": "WND",
+        "start_date": "2025-12-25",
+        "end_date": "2026-01-24",
+        "total_records": 721,
+        "pages": 1,
+        "rows_parsed": 721,
+        "empty": false
+      },
+      {
+        "region": "CALI",
+        "fuel_type": "WND",
+        "start_date": "2025-12-25",
+        "end_date": "2026-01-24",
+        "total_records": 721,
+        "pages": 1,
+        "rows_parsed": 721,
+        "empty": false
+      },
+      {
+        "region": "MISO",
         "fuel_type": "SUN",
         "start_date": "2025-12-25",
         "end_date": "2026-01-24",
@@ -202,7 +202,7 @@
         "empty": false
       },
       {
-        "region": "MISO",
+        "region": "ERCO",
         "fuel_type": "SUN",
         "start_date": "2025-12-25",
         "end_date": "2026-01-24",
@@ -220,33 +220,13 @@
       "row_count": 4326,
       "series_count": 6,
       "max_ds": "2026-01-24T00:00:00+00:00",
-      "lag_hours": 13.0,
+      "lag_hours": 14.0,
       "worst_missing_ratio": 0.0
     }
   },
   "diagnostics": {
     "fetch": [
       {
-        "region": "CALI",
-        "fuel_type": "WND",
-        "start_date": "2025-12-25",
-        "end_date": "2026-01-24",
-        "total_records": 721,
-        "pages": 1,
-        "rows_parsed": 721,
-        "empty": false
-      },
-      {
-        "region": "ERCO",
-        "fuel_type": "WND",
-        "start_date": "2025-12-25",
-        "end_date": "2026-01-24",
-        "total_records": 721,
-        "pages": 1,
-        "rows_parsed": 721,
-        "empty": false
-      },
-      {
         "region": "MISO",
         "fuel_type": "WND",
         "start_date": "2025-12-25",
@@ -258,6 +238,26 @@
       },
       {
         "region": "ERCO",
+        "fuel_type": "WND",
+        "start_date": "2025-12-25",
+        "end_date": "2026-01-24",
+        "total_records": 721,
+        "pages": 1,
+        "rows_parsed": 721,
+        "empty": false
+      },
+      {
+        "region": "CALI",
+        "fuel_type": "WND",
+        "start_date": "2025-12-25",
+        "end_date": "2026-01-24",
+        "total_records": 721,
+        "pages": 1,
+        "rows_parsed": 721,
+        "empty": false
+      },
+      {
+        "region": "MISO",
         "fuel_type": "SUN",
         "start_date": "2025-12-25",
         "end_date": "2026-01-24",
@@ -277,7 +277,7 @@
         "empty": false
       },
       {
-        "region": "MISO",
+        "region": "ERCO",
         "fuel_type": "SUN",
         "start_date": "2025-12-25",
         "end_date": "2026-01-24",

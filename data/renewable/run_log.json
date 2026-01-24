@@ -1,5 +1,5 @@
 {
-  "run_at_utc": "2026-01-24T14:45:04.328860+00:00",
+  "run_at_utc": "2026-01-24T15:45:41.491328+00:00",
   "config": {
     "regions": [
       "CALI",
@@ -21,7 +21,7 @@
   "pipeline_results": {
     "generation_rows": 4326,
     "series_count": 6,
-    "weather_rows": 2349,
+    "weather_rows": 2352,
     "eda": {
       "output_dir": "data/renewable/eda",
       "negative_policy": "clamp_to_zero",
@@ -162,7 +162,7 @@
         "empty": false
       },
       {
-        "region": "ERCO",
+        "region": "CALI",
         "fuel_type": "WND",
         "start_date": "2025-12-25",
         "end_date": "2026-01-24",
@@ -172,7 +172,7 @@
         "empty": false
       },
       {
-        "region": "CALI",
+        "region": "ERCO",
         "fuel_type": "WND",
         "start_date": "2025-12-25",
         "end_date": "2026-01-24",
@@ -192,7 +192,7 @@
         "empty": false
       },
       {
-        "region": "CALI",
+        "region": "ERCO",
         "fuel_type": "SUN",
         "start_date": "2025-12-25",
         "end_date": "2026-01-24",
@@ -202,7 +202,7 @@
         "empty": false
       },
       {
-        "region": "ERCO",
+        "region": "CALI",
         "fuel_type": "SUN",
         "start_date": "2025-12-25",
         "end_date": "2026-01-24",
@@ -220,7 +220,7 @@
       "row_count": 4326,
       "series_count": 6,
       "max_ds": "2026-01-24T00:00:00+00:00",
-      "lag_hours": 14.0,
+      "lag_hours": 15.0,
       "worst_missing_ratio": 0.0
     }
   },
@@ -237,7 +237,7 @@
         "empty": false
       },
       {
-        "region": "ERCO",
+        "region": "CALI",
         "fuel_type": "WND",
         "start_date": "2025-12-25",
         "end_date": "2026-01-24",
@@ -247,7 +247,7 @@
         "empty": false
       },
       {
-        "region": "CALI",
+        "region": "ERCO",
         "fuel_type": "WND",
         "start_date": "2025-12-25",
         "end_date": "2026-01-24",
@@ -267,7 +267,7 @@
         "empty": false
       },
       {
-        "region": "CALI",
+        "region": "ERCO",
         "fuel_type": "SUN",
         "start_date": "2025-12-25",
         "end_date": "2026-01-24",
@@ -277,7 +277,7 @@
         "empty": false
       },
       {
-        "region": "ERCO",
+        "region": "CALI",
         "fuel_type": "SUN",
         "start_date": "2025-12-25",
         "end_date": "2026-01-24",

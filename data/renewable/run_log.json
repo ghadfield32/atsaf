@@ -1,5 +1,5 @@
 {
-  "run_at_utc": "2026-01-25T13:50:57.281928+00:00",
+  "run_at_utc": "2026-01-25T14:49:00.228167+00:00",
   "config": {
     "regions": [
       "CALI",
@@ -21,7 +21,7 @@
   "pipeline_results": {
     "generation_rows": 4326,
     "series_count": 6,
-    "weather_rows": 2346,
+    "weather_rows": 2349,
     "eda": {
       "output_dir": "data/renewable/eda",
       "negative_policy": "clamp_to_zero",
@@ -152,16 +152,6 @@
     },
     "fetch_diagnostics": [
       {
-        "region": "MISO",
-        "fuel_type": "WND",
-        "start_date": "2025-12-26",
-        "end_date": "2026-01-25",
-        "total_records": 721,
-        "pages": 1,
-        "rows_parsed": 721,
-        "empty": false
-      },
-      {
         "region": "CALI",
         "fuel_type": "WND",
         "start_date": "2025-12-26",
@@ -183,7 +173,7 @@
       },
       {
         "region": "MISO",
-        "fuel_type": "SUN",
+        "fuel_type": "WND",
         "start_date": "2025-12-26",
         "end_date": "2026-01-25",
         "total_records": 721,
@@ -193,6 +183,16 @@
       },
       {
         "region": "CALI",
+        "fuel_type": "SUN",
+        "start_date": "2025-12-26",
+        "end_date": "2026-01-25",
+        "total_records": 721,
+        "pages": 1,
+        "rows_parsed": 721,
+        "empty": false
+      },
+      {
+        "region": "MISO",
         "fuel_type": "SUN",
         "start_date": "2025-12-26",
         "end_date": "2026-01-25",
@@ -220,22 +220,12 @@
       "row_count": 4326,
       "series_count": 6,
       "max_ds": "2026-01-25T00:00:00+00:00",
-      "lag_hours": 13.0,
+      "lag_hours": 14.0,
       "worst_missing_ratio": 0.0
     }
   },
   "diagnostics": {
     "fetch": [
-      {
-        "region": "MISO",
-        "fuel_type": "WND",
-        "start_date": "2025-12-26",
-        "end_date": "2026-01-25",
-        "total_records": 721,
-        "pages": 1,
-        "rows_parsed": 721,
-        "empty": false
-      },
       {
         "region": "CALI",
         "fuel_type": "WND",
@@ -258,7 +248,7 @@
       },
       {
         "region": "MISO",
-        "fuel_type": "SUN",
+        "fuel_type": "WND",
         "start_date": "2025-12-26",
         "end_date": "2026-01-25",
         "total_records": 721,
@@ -268,6 +258,16 @@
       },
       {
         "region": "CALI",
+        "fuel_type": "SUN",
+        "start_date": "2025-12-26",
+        "end_date": "2026-01-25",
+        "total_records": 721,
+        "pages": 1,
+        "rows_parsed": 721,
+        "empty": false
+      },
+      {
+        "region": "MISO",
         "fuel_type": "SUN",
         "start_date": "2025-12-26",
         "end_date": "2026-01-25",

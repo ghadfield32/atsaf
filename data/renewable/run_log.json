@@ -1,5 +1,5 @@
 {
-  "run_at_utc": "2026-01-25T01:07:07.081655+00:00",
+  "run_at_utc": "2026-01-25T02:19:14.449555+00:00",
   "config": {
     "regions": [
       "CALI",
@@ -21,7 +21,7 @@
   "pipeline_results": {
     "generation_rows": 4214,
     "series_count": 6,
-    "weather_rows": 2307,
+    "weather_rows": 2313,
     "eda": {
       "output_dir": "data/renewable/eda",
       "negative_policy": "clamp_to_zero",
@@ -192,16 +192,6 @@
         "empty": false
       },
       {
-        "region": "MISO",
-        "fuel_type": "SUN",
-        "start_date": "2025-12-26",
-        "end_date": "2026-01-25",
-        "total_records": 701,
-        "pages": 1,
-        "rows_parsed": 701,
-        "empty": false
-      },
-      {
         "region": "CALI",
         "fuel_type": "SUN",
         "start_date": "2025-12-26",
@@ -209,6 +199,16 @@
         "total_records": 704,
         "pages": 1,
         "rows_parsed": 704,
+        "empty": false
+      },
+      {
+        "region": "MISO",
+        "fuel_type": "SUN",
+        "start_date": "2025-12-26",
+        "end_date": "2026-01-25",
+        "total_records": 701,
+        "pages": 1,
+        "rows_parsed": 701,
         "empty": false
       }
     ]
@@ -220,7 +220,7 @@
       "row_count": 4214,
       "series_count": 6,
       "max_ds": "2026-01-24T07:00:00+00:00",
-      "lag_hours": 18.0,
+      "lag_hours": 19.0,
       "worst_missing_ratio": 0.0
     }
   },
@@ -267,16 +267,6 @@
         "empty": false
       },
       {
-        "region": "MISO",
-        "fuel_type": "SUN",
-        "start_date": "2025-12-26",
-        "end_date": "2026-01-25",
-        "total_records": 701,
-        "pages": 1,
-        "rows_parsed": 701,
-        "empty": false
-      },
-      {
         "region": "CALI",
         "fuel_type": "SUN",
         "start_date": "2025-12-26",
@@ -284,6 +274,16 @@
         "total_records": 704,
         "pages": 1,
         "rows_parsed": 704,
+        "empty": false
+      },
+      {
+        "region": "MISO",
+        "fuel_type": "SUN",
+        "start_date": "2025-12-26",
+        "end_date": "2026-01-25",
+        "total_records": 701,
+        "pages": 1,
+        "rows_parsed": 701,
         "empty": false
       }
     ],
@@ -339,7 +339,7 @@
   "quality_gates": {
     "rowdrop": {
       "ok": true,
-      "prev_rows": 4326,
+      "prev_rows": 4214,
       "curr_rows": 4214,
       "max_rowdrop_pct": 0.3
     },

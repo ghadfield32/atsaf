@@ -1,5 +1,5 @@
 {
-  "run_at_utc": "2026-01-26T12:48:14.015364+00:00",
+  "run_at_utc": "2026-01-26T13:51:33.164132+00:00",
   "config": {
     "regions": [
       "CALI",
@@ -21,7 +21,7 @@
   "pipeline_results": {
     "generation_rows": 4326,
     "series_count": 6,
-    "weather_rows": 2343,
+    "weather_rows": 2346,
     "eda": {
       "output_dir": "data/renewable/eda",
       "negative_policy": "clamp_to_zero",
@@ -152,7 +152,7 @@
     },
     "fetch_diagnostics": [
       {
-        "region": "CALI",
+        "region": "ERCO",
         "fuel_type": "WND",
         "start_date": "2025-12-27",
         "end_date": "2026-01-26",
@@ -162,7 +162,7 @@
         "empty": false
       },
       {
-        "region": "ERCO",
+        "region": "CALI",
         "fuel_type": "WND",
         "start_date": "2025-12-27",
         "end_date": "2026-01-26",
@@ -220,14 +220,14 @@
       "row_count": 4326,
       "series_count": 6,
       "max_ds": "2026-01-26T00:00:00+00:00",
-      "lag_hours": 12.0,
+      "lag_hours": 13.0,
       "worst_missing_ratio": 0.0
     }
   },
   "diagnostics": {
     "fetch": [
       {
-        "region": "CALI",
+        "region": "ERCO",
         "fuel_type": "WND",
         "start_date": "2025-12-27",
         "end_date": "2026-01-26",
@@ -237,7 +237,7 @@
         "empty": false
       },
       {
-        "region": "ERCO",
+        "region": "CALI",
         "fuel_type": "WND",
         "start_date": "2025-12-27",
         "end_date": "2026-01-26",
@@ -339,7 +339,7 @@
   "quality_gates": {
     "rowdrop": {
       "ok": true,
-      "prev_rows": 4214,
+      "prev_rows": 4326,
       "curr_rows": 4326,
       "max_rowdrop_pct": 0.3
     },

@@ -1,5 +1,5 @@
 {
-  "run_at_utc": "2026-01-26T19:47:48.724933+00:00",
+  "run_at_utc": "2026-01-26T20:47:48.799725+00:00",
   "config": {
     "regions": [
       "CALI",
@@ -21,7 +21,7 @@
   "pipeline_results": {
     "generation_rows": 4326,
     "series_count": 6,
-    "weather_rows": 2364,
+    "weather_rows": 2367,
     "eda": {
       "output_dir": "data/renewable/eda",
       "negative_policy": "clamp_to_zero",
@@ -152,6 +152,16 @@
     },
     "fetch_diagnostics": [
       {
+        "region": "ERCO",
+        "fuel_type": "WND",
+        "start_date": "2025-12-27",
+        "end_date": "2026-01-26",
+        "total_records": 721,
+        "pages": 1,
+        "rows_parsed": 721,
+        "empty": false
+      },
+      {
         "region": "MISO",
         "fuel_type": "WND",
         "start_date": "2025-12-27",
@@ -163,16 +173,6 @@
       },
       {
         "region": "CALI",
-        "fuel_type": "WND",
-        "start_date": "2025-12-27",
-        "end_date": "2026-01-26",
-        "total_records": 721,
-        "pages": 1,
-        "rows_parsed": 721,
-        "empty": false
-      },
-      {
-        "region": "ERCO",
         "fuel_type": "WND",
         "start_date": "2025-12-27",
         "end_date": "2026-01-26",
@@ -220,12 +220,22 @@
       "row_count": 4326,
       "series_count": 6,
       "max_ds": "2026-01-26T00:00:00+00:00",
-      "lag_hours": 19.0,
+      "lag_hours": 20.0,
       "worst_missing_ratio": 0.0
     }
   },
   "diagnostics": {
     "fetch": [
+      {
+        "region": "ERCO",
+        "fuel_type": "WND",
+        "start_date": "2025-12-27",
+        "end_date": "2026-01-26",
+        "total_records": 721,
+        "pages": 1,
+        "rows_parsed": 721,
+        "empty": false
+      },
       {
         "region": "MISO",
         "fuel_type": "WND",
@@ -238,16 +248,6 @@
       },
       {
         "region": "CALI",
-        "fuel_type": "WND",
-        "start_date": "2025-12-27",
-        "end_date": "2026-01-26",
-        "total_records": 721,
-        "pages": 1,
-        "rows_parsed": 721,
-        "empty": false
-      },
-      {
-        "region": "ERCO",
         "fuel_type": "WND",
         "start_date": "2025-12-27",
         "end_date": "2026-01-26",

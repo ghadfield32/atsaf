@@ -27,46 +27,41 @@ requires-python = ">=3.11,<3.14"
 
 dependencies = [
     # Data fetching and processing
-    "requests>=2.28.0",           # HTTP requests for API calls
-    "pandas>=1.5.0",              # Data manipulation and analysis
-    "numpy>=1.24.0",              # Numerical computing
-    "duckdb>=0.8.0",              # Fast SQL queries on data
-    "python-dotenv>=1.0.0",       # Load environment variables from .env file
-
+    "requests>=2.28.0", # HTTP requests for API calls
+    "pandas>=1.5.0", # Data manipulation and analysis
+    "numpy>=1.24.0", # Numerical computing
+    "duckdb>=0.8.0", # Fast SQL queries on data
+    "python-dotenv>=1.0.0", # Load environment variables from .env file
+    "pyspark>=4.1.0", # Big data processing framework
     # Time series forecasting
-    "statsforecast>=1.5.0",       # Statistical forecasting methods
-    "mlforecast>=0.10.0",         # ML-based forecasting
-    "nixtla>=0.0.1",              # Nixtla ecosystem utilities
-    "skforecast>=0.14.0",         # ML-based recursive forecasting
-    "lightgbm>=4.0.0",            # Gradient boosting for forecasting
-
+    "statsforecast>=1.5.0", # Statistical forecasting methods
+    "mlforecast>=0.10.0", # ML-based forecasting
+    "nixtla>=0.0.1", # Nixtla ecosystem utilities
+    "skforecast>=0.14.0", # ML-based recursive forecasting
+    "lightgbm>=4.0.0", # Gradient boosting for forecasting
     # Model interpretability
-    "shap>=0.50.0",               # SHAP values for model explanations
-
+    "shap>=0.50.0", # SHAP values for model explanations
     # Statistical analysis and modeling
-    "statsmodels>=0.14.0",        # Statistical modeling and tests
-    "scipy>=1.10.0",              # Scientific computing
-    "scikit-learn>=1.2.0",        # Machine learning and preprocessing
-
+    "statsmodels>=0.14.0", # Statistical modeling and tests
+    "scipy>=1.10.0", # Scientific computing
+    "scikit-learn>=1.2.0", # Machine learning and preprocessing
     # Visualization
-    "matplotlib>=3.7.0",          # Static plotting
-    "seaborn>=0.12.0",            # Statistical data visualization
-    "plotly>=5.0.0",              # Interactive web-based visualization
-
+    "matplotlib>=3.7.0", # Static plotting
+    "seaborn>=0.12.0", # Statistical data visualization
+    "plotly>=5.0.0", # Interactive web-based visualization
     # MLOps and workflow
-    "mlflow>=2.0.0",              # Experiment tracking and model registry
-    "apache-airflow>=2.5.0",      # Workflow orchestration
-
+    "mlflow>=2.0.0", # Experiment tracking and model registry
+    "apache-airflow>=2.5.0", # Workflow orchestration
     # CLI and monitoring (Chapter 3-4)
-    "typer>=0.9.0",               # CLI framework
-    "rich>=13.0.0",               # Pretty CLI output
-    "evidently>=0.4.0",           # Drift detection and monitoring
-    "streamlit>=1.30.0",          # Dashboard UI
-    "streamlit-mermaid~=0.3.0",   # Mermaid diagrams in Streamlit (latest 0.3.0)
-    "pydantic-settings>=2.0.0",   # Type-safe configuration
+    "typer>=0.9.0", # CLI framework
+    "rich>=13.0.0", # Pretty CLI output
+    "evidently>=0.4.0", # Drift detection and monitoring
+    "streamlit>=1.30.0", # Dashboard UI
+    "streamlit-mermaid~=0.3.0", # Mermaid diagrams in Streamlit (latest 0.3.0)
+    "pydantic-settings>=2.0.0", # Type-safe configuration
     "protobuf>=4.21,<7",
-    "ipykernel>=6.0.0",            # IPython kernel for Jupyter
-
+    "ipykernel>=6.0.0", # IPython kernel for Jupyter
+    "sqlglot>=28.6.0",
 ]
 
 [project.optional-dependencies]

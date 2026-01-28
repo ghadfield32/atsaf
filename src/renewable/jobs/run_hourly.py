@@ -198,22 +198,74 @@ def run_hourly_pipeline() -> dict:
     # DEBUG: Log force_run status
     print(f"[pipeline] FORCE_RUN={force_run}")
 
+    # Validation thresholds (used in freshness check + validation)
+    max_lag_hours = _env_int("MAX_LAG_HOURS", 48)
+    max_missing_ratio = _env_float("MAX_MISSING_RATIO", 0.02)
+
+    # Per-region lag threshold overrides (optional)
+    region_lag_thresholds = {}
+    for region in regions:
+        region_threshold = _env_int(f"MAX_LAG_HOURS_{region}", None)
+        if region_threshold is not None:
+            region_lag_thresholds[region] = region_threshold
+            print(
+                f"[config] Region-specific threshold: "
+                f"{region} max_lag_hours={region_threshold}h"
+            )
+
     # Data freshness check - skip full pipeline if no new data
     if not force_run:
         api_key = os.getenv("EIA_API_KEY", "")
         if not api_key:
             print("WARNING: EIA_API_KEY not set, skipping freshness check")
         else:
+            # Track timing
+            freshness_check_start = datetime.now(timezone.utc)
+            print(
+                f"[pipeline][TIMING] Freshness check starting at "
+                f"{freshness_check_start.isoformat()}"
+            )
+
             run_log_path = Path(data_dir) / "run_log.json"
             freshness = check_all_series_freshness(
                 regions=regions,
                 fuel_types=fuel_types,
                 run_log_path=run_log_path,
                 api_key=api_key,
+                max_lag_hours=max_lag_hours,
+            )
+
+            # Log freshness check completion
+            freshness_check_end = datetime.now(timezone.utc)
+            freshness_elapsed = (
+                (freshness_check_end - freshness_check_start).total_seconds()
+            )
+            print(
+                f"[pipeline][TIMING] Freshness check completed at "
+                f"{freshness_check_end.isoformat()} "
+                f"(elapsed: {freshness_elapsed:.1f}s)"
             )
 
             if not freshness.has_new_data:
                 # No new data - return early with skip status
+                print(f"SKIPPED: {freshness.summary}")
+                print("[freshness][DETAILS] Per-series status:")
+                for series_id, status in freshness.series_status.items():
+                    prev = status.get("prev_max_ds", "N/A")
+                    current = status.get("current_max_ds", "N/A")
+                    is_new = status.get("is_new", False)
+                    lag = status.get("lag_hours", "N/A")
+                    stale_flag = status.get("is_stale", False)
+
+                    status_str = "NEW" if is_new else "unchanged"
+                    if stale_flag:
+                        status_str += " (STALE)"
+
+                    print(
+                        f"  {series_id}: prev={prev} current={current} "
+                        f"lag={lag}h ({status_str})"
+                    )
+
                 skip_log = {
                     "run_at_utc": datetime.now(timezone.utc).isoformat(),
                     "status": "skipped",
@@ -237,7 +289,6 @@ def run_hourly_pipeline() -> dict:
                     json.dumps(skip_log, indent=2, default=_json_default)
                 )
 
-                print(f"SKIPPED: {freshness.summary}")
                 print(f"Skip log written to: {skip_log_path}")
 
                 # Set output for GitHub Actions
@@ -248,10 +299,50 @@ def run_hourly_pipeline() -> dict:
 
                 return skip_log
 
+            # Freshness check passed - log details
             print(f"Freshness check: {freshness.summary}")
+            print("[freshness][DETAILS] Per-series status:")
+            for series_id, status in freshness.series_status.items():
+                prev = status.get("prev_max_ds", "N/A")
+                current = status.get("current_max_ds", "N/A")
+                is_new = status.get("is_new", False)
+                lag = status.get("lag_hours", "N/A")
+                stale_flag = status.get("is_stale", False)
+
+                status_str = "NEW" if is_new else "unchanged"
+                if stale_flag:
+                    status_str += " (STALE)"
+
+                print(
+                    f"  {series_id}: prev={prev} current={current} "
+                    f"lag={lag}h ({status_str})"
+                )
     else:
-        print("[pipeline] FORCE_RUN=true - bypassing freshness check (manual run requested)")
+        print(
+            "[pipeline] FORCE_RUN=true - "
+            "bypassing freshness check (manual run requested)"
+        )
         print("[pipeline] Pipeline will run regardless of data freshness")
+
+    # Pipeline execution timing
+    pipeline_start_time = datetime.now(timezone.utc)
+    if 'freshness_check_start' in locals():
+        elapsed_since_freshness = (
+            (pipeline_start_time - freshness_check_start).total_seconds() / 60.0
+        )
+        print(
+            f"[pipeline][TIMING] Pipeline starting at "
+            f"{pipeline_start_time.isoformat()}"
+        )
+        print(
+            f"[pipeline][TIMING] Elapsed since freshness check: "
+            f"{elapsed_since_freshness:.2f} minutes"
+        )
+    else:
+        print(
+            f"[pipeline][TIMING] Pipeline starting at "
+            f"{pipeline_start_time.isoformat()} (FORCE_RUN, no freshness check)"
+        )
 
     cfg = RenewablePipelineConfig(
         regions=regions,
@@ -259,16 +350,15 @@ def run_hourly_pipeline() -> dict:
         lookback_days=lookback_days,
         horizon=horizon,
         horizon_preset=horizon_preset,  # Apply preset if specified
-        cv_windows=cv_windows,          # Pass to constructor to validate with correct value
-        cv_step_size=cv_step_size,      # Pass to constructor
+        cv_windows=cv_windows,
+        cv_step_size=cv_step_size,
         data_dir=data_dir,
         overwrite=True,
         start_date=start_date,
         end_date=end_date,
     )
-    # Post-construction assignments no longer needed
 
-    # Add option to skip EDA for fast iteration (set SKIP_EDA=true in .env)
+    # Add option to skip EDA for fast iteration
     skip_eda = os.getenv("SKIP_EDA", "false").lower() == "true"
 
     fetch_diagnostics: list[dict] = []
@@ -276,19 +366,36 @@ def run_hourly_pipeline() -> dict:
         cfg,
         fetch_diagnostics=fetch_diagnostics,
         skip_eda=skip_eda,
+        max_lag_hours=max_lag_hours,
+        max_missing_ratio=max_missing_ratio,
+    )
+
+    # Validation timing
+    validation_start_time = datetime.now(timezone.utc)
+    elapsed_since_pipeline = (
+        (validation_start_time - pipeline_start_time).total_seconds() / 60.0
+    )
+    print(
+        f"[pipeline][TIMING] Validation starting at "
+        f"{validation_start_time.isoformat()}"
+    )
+    print(
+        f"[pipeline][TIMING] Elapsed since pipeline start: "
+        f"{elapsed_since_pipeline:.2f} minutes"
     )
 
     gen_path = cfg.generation_path()
     gen_df = pd.read_parquet(gen_path)
     generation_coverage = _summarize_generation_coverage(gen_df)
 
-    max_lag_hours = _env_int("MAX_LAG_HOURS", 48)  # EIA publishes with 12-24h delay
-    max_missing_ratio = _env_float("MAX_MISSING_RATIO", 0.02)
     report = validate_generation_df(
         gen_df,
         max_lag_hours=max_lag_hours,
         max_missing_ratio=max_missing_ratio,
         expected_series=_expected_series(regions, fuel_types),
+        region_lag_thresholds=(
+            region_lag_thresholds if region_lag_thresholds else None
+        ),
     )
 
     forecasts_df = pd.read_parquet(cfg.forecasts_path())
@@ -348,6 +455,8 @@ def run_hourly_pipeline() -> dict:
             "ok": report.ok,
             "message": report.message,
             "details": report.details,
+            "max_lag_hours": max_lag_hours,
+            "max_missing_ratio": max_missing_ratio,
         },
         "diagnostics": {
             "fetch": fetch_diagnostics,

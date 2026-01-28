@@ -84,7 +84,8 @@ def probe_eia_latest(
     fuel_type: str,
     *,
     timeout: int = 15,
-) -> Optional[str]:
+    max_lag_hours: Optional[int] = None,
+) -> dict:
     """
     Fetch only the single most recent record from EIA API.
 
@@ -92,14 +93,21 @@ def probe_eia_latest(
     - length=1 (only fetch 1 record)
     - sort by period DESC (most recent first)
 
+    NEW: Now calculates lag and includes in return value for diagnosis.
+
     Args:
         api_key: EIA API key
         region: Region code (CALI, ERCO, MISO, etc.)
         fuel_type: Fuel type (WND, SUN)
         timeout: Request timeout in seconds
+        max_lag_hours: Optional threshold to flag stale data
 
     Returns:
-        ISO timestamp string of latest record, or None on error.
+        Dict with keys:
+        - 'timestamp': ISO timestamp string or None
+        - 'lag_hours': Float hours since now, or None
+        - 'is_stale': Bool if lag > max_lag_hours (if threshold provided)
+        - 'error': Error message if probe failed, or None
     """
     try:
         respondent = get_eia_respondent(region)
@@ -125,23 +133,74 @@ def probe_eia_latest(
 
         if not records:
             logger.warning(f"[probe] {region}_{fuel_type}: No records returned")
-            return None
+            return {
+                "timestamp": None,
+                "lag_hours": None,
+                "is_stale": None,
+                "error": "No records returned from EIA API"
+            }
 
         period = records[0].get("period")
         if not period:
             logger.warning(f"[probe] {region}_{fuel_type}: Record missing 'period'")
-            return None
+            return {
+                "timestamp": None,
+                "lag_hours": None,
+                "is_stale": None,
+                "error": "Record missing 'period' field"
+            }
 
         # Parse to consistent ISO format
         ts = pd.to_datetime(period, utc=True)
-        return ts.isoformat()
+        timestamp_iso = ts.isoformat()
+
+        # Calculate lag from now (floored to hour for consistency)
+        now_utc = pd.Timestamp.now(tz="UTC").floor("h")
+        lag_hours = (now_utc - ts).total_seconds() / 3600.0
+
+        # Determine staleness if threshold provided
+        is_stale = (
+            (lag_hours > max_lag_hours)
+            if max_lag_hours is not None
+            else None
+        )
+
+        # Log with diagnostic info
+        status_str = ""
+        if is_stale is not None:
+            if is_stale:
+                status_str = f" (STALE > {max_lag_hours}h)"
+            else:
+                status_str = f" (OK < {max_lag_hours}h)"
+        series_id = f"{region}_{fuel_type}"
+        logger.info(
+            f"[freshness][PROBE] {series_id}: latest_ds={timestamp_iso} "
+            f"lag={lag_hours:.1f}h{status_str}"
+        )
+
+        return {
+            "timestamp": timestamp_iso,
+            "lag_hours": lag_hours,
+            "is_stale": is_stale,
+            "error": None
+        }
 
     except requests.RequestException as e:
         logger.warning(f"[probe] {region}_{fuel_type}: API error: {e}")
-        return None
+        return {
+            "timestamp": None,
+            "lag_hours": None,
+            "is_stale": None,
+            "error": f"API error: {e}"
+        }
     except Exception as e:
         logger.warning(f"[probe] {region}_{fuel_type}: Unexpected error: {e}")
-        return None
+        return {
+            "timestamp": None,
+            "lag_hours": None,
+            "is_stale": None,
+            "error": f"Unexpected error: {e}"
+        }
 
 
 def _compare_timestamps(prev: Optional[str], current: Optional[str]) -> bool:
@@ -166,18 +225,25 @@ def check_all_series_freshness(
     fuel_types: list[str],
     run_log_path: Path,
     api_key: str,
+    max_lag_hours: int = 48,
 ) -> FreshnessCheckResult:
     """
-    Check all series for new data availability.
+    Check all series for new data availability AND freshness.
+
+    NEW: Now also validates that series are not stale beyond max_lag_hours.
 
     Args:
         regions: List of region codes (e.g., ["CALI", "ERCO", "MISO"])
         fuel_types: List of fuel types (e.g., ["WND", "SUN"])
         run_log_path: Path to previous run_log.json
         api_key: EIA API key
+        max_lag_hours: Max allowed lag before considering data stale
 
     Returns:
-        FreshnessCheckResult with has_new_data flag and detailed status per series.
+        FreshnessCheckResult with has_new_data flag and per-series status.
+        has_new_data=False if:
+        1. No series has changed since last run, OR
+        2. Some series have changed but at least one is stale
     """
     checked_at = datetime.now(timezone.utc).isoformat()
 
@@ -190,7 +256,10 @@ def check_all_series_freshness(
             has_new_data=True,
             checked_at_utc=checked_at,
             series_status={},
-            summary="No previous run_log.json found - running full pipeline (first run)",
+            summary=(
+                "No previous run_log.json found - "
+                "running full pipeline (first run)"
+            ),
         )
 
     # 3. Probe each series
@@ -198,12 +267,22 @@ def check_all_series_freshness(
     has_any_new = False
     new_series: list[str] = []
     error_series: list[str] = []
+    stale_series: list[str] = []
 
     for region in regions:
         for fuel_type in fuel_types:
             series_id = f"{region}_{fuel_type}"
             prev = prev_max_ds.get(series_id)
-            current = probe_eia_latest(api_key, region, fuel_type)
+
+            # Probe with lag calculation
+            probe_result = probe_eia_latest(
+                api_key, region, fuel_type, max_lag_hours=max_lag_hours
+            )
+
+            current = probe_result.get("timestamp")
+            lag_hours = probe_result.get("lag_hours")
+            is_stale = probe_result.get("is_stale")
+            error = probe_result.get("error")
 
             # Determine if this series has new data
             if current is None:
@@ -211,7 +290,8 @@ def check_all_series_freshness(
                 is_new = True
                 error_series.append(series_id)
                 logger.warning(
-                    f"[freshness] {series_id}: probe failed, assuming new data"
+                    f"[freshness] {series_id}: probe failed, "
+                    f"assuming new data"
                 )
             else:
                 is_new = _compare_timestamps(prev, current)
@@ -219,7 +299,10 @@ def check_all_series_freshness(
             series_status[series_id] = {
                 "prev_max_ds": prev,
                 "current_max_ds": current,
+                "lag_hours": lag_hours,
+                "is_stale": is_stale,
                 "is_new": is_new,
+                "error": error,
             }
 
             if is_new:
@@ -227,15 +310,39 @@ def check_all_series_freshness(
                 if current is not None:
                     new_series.append(series_id)
 
+            # Track stale series
+            if is_stale:
+                stale_series.append(series_id)
+
             # Log each series check
             status_str = "NEW" if is_new else "unchanged"
+            if is_stale:
+                status_str += " (STALE)"
             logger.info(
-                f"[freshness] {series_id}: prev={prev} current={current} ({status_str})"
+                f"[freshness] {series_id}: prev={prev} current={current} "
+                f"lag={lag_hours:.1f}h ({status_str})"
             )
 
-    # 4. Build summary
+    # 4. Check for stale series (blocks pipeline run)
+    if stale_series:
+        summary = (
+            f"Stale series detected (>{max_lag_hours}h): "
+            f"{', '.join(stale_series)}"
+        )
+        logger.warning(f"[freshness] {summary}")
+        return FreshnessCheckResult(
+            has_new_data=False,  # BLOCK pipeline run
+            checked_at_utc=checked_at,
+            series_status=series_status,
+            summary=summary,
+        )
+
+    # 5. Build summary for non-stale cases
     if error_series:
-        summary = f"Probe errors for {error_series}, assuming new data available"
+        summary = (
+            f"Probe errors for {error_series}, "
+            f"assuming new data available"
+        )
     elif new_series:
         summary = f"New data found for: {', '.join(new_series)}"
     else:

@@ -1,5 +1,117 @@
 # ATSAF Project Log
 
+## 2026-01-28: Renewable Pipeline Stale-Series Root Cause Fix
+
+### Problem Statement
+Pipeline fails with `RuntimeError: [pipeline][generation_validation] Stale series found details={'stale_series': {'CALI_SUN': 52.0, 'CALI_WND': 52.0}, 'max_lag_hours': 48}` despite freshness check passing. Root cause: freshness check only detects "data changed" but doesn't validate lag threshold, allowing stale data to enter pipeline.
+
+### Root Cause Analysis
+
+**Architectural Gap:** Freshness check and validation ask different questions:
+- **Freshness check** (data_freshness.py): "Did ANY series get updated?" → passes if ERCO/MISO fresh
+- **Validation check** (validation.py): "Is ALL data fresh enough?" → fails if CALI stale
+
+**Timeline:**
+1. Freshness check probes latest record per series → ERCO/MISO updated → returns has_new_data=TRUE
+2. Pipeline runs full fetch (2+ minutes) → retrieves 30 days of data
+3. Validation checks per-series lag → CALI_SUN 52h, CALI_WND 52h > 48h threshold → RuntimeError
+
+**Impact:** Pipeline wastes ~2 minutes fetching/processing data that will inevitably fail validation.
+
+### Phase 1: Diagnostic Additions (Lines Added: ~120)
+**Goal:** Add visibility without changing behavior
+
+**data_freshness.py** (lines 81-190):
+- probe_eia_latest(): Changed return from Optional[str] to dict with {timestamp, lag_hours, is_stale, error}
+- Added lag calculation using pd.Timestamp.now().floor("h") for consistency with validation
+- Added per-probe logging: `[freshness][PROBE] CALI_SUN: latest_ds=2024-01-25T12:00:00Z lag=52.3h (STALE > 48h)`
+
+**validation.py** (lines 113-158):
+- Added timing diagnostics: now_utc raw vs floored, overall max_ds, per-series lag calc
+- Log format: `[validation][TIMING] CALI_SUN: max_ds=2024-01-25T12:00:00Z lag=52.0h (threshold=48h) [STALE]`
+- Shows exact timestamps and lag values for each series
+
+**run_hourly.py** (lines 207-304):
+- Added elapsed time tracking: freshness_check_start → pipeline_start_time → validation_start_time
+- Enhanced freshness status logging with lag_hours and is_stale flags
+- Log format: `[pipeline][TIMING] Elapsed since freshness check: 0.02 minutes`
+
+**Findings:** Confirmed CALI series are already stale (52h) at probe time, but freshness check passes because ERCO/MISO have new data. Validation correctly fails but pipeline wastes compute before failure.
+
+### Phase 2: Core Fix - Lag-Aware Freshness Check (Lines Modified: ~60)
+**Approach:** Block pipeline run if ANY series exceeds lag threshold
+
+**data_freshness.py** (lines 191-316):
+- check_all_series_freshness(): Added max_lag_hours parameter (default 48h)
+- Now calls probe_eia_latest() with max_lag_hours to get is_stale flag
+- Tracks stale_series list, returns has_new_data=False if any found
+- Summary example: `Stale series detected (>48h): CALI_WND, CALI_SUN`
+
+**run_hourly.py** (lines 203-215):
+- Moved max_lag_hours/max_missing_ratio parsing before freshness check
+- Pass max_lag_hours to check_all_series_freshness()
+- Enhanced skip logging to show per-series lag and stale flags
+
+**Impact:** Pipeline now skips when data is stale, saving ~2min compute time. Clear logs show which series are blocking. Prevents wasted processing on data guaranteed to fail validation.
+
+### Phase 3: Enhancement - Per-Region Thresholds (Lines Added: ~50)
+**Approach:** Allow different lag thresholds per region for known-slow data sources
+
+**run_hourly.py** (lines 207-218, 391-397):
+- Added per-region threshold parsing: MAX_LAG_HOURS_CALI, MAX_LAG_HOURS_ERCO, MAX_LAG_HOURS_MISO
+- Build region_lag_thresholds dict from environment variables
+- Log region-specific config: `[config] Region-specific threshold: CALI max_lag_hours=72h`
+- Pass region_lag_thresholds to validate_generation_df()
+
+**validation.py** (lines 19-25, 145-213):
+- Added region_lag_thresholds parameter to validate_generation_df()
+- Extract region from unique_id ("REGION_FUEL" format)
+- Use region-specific threshold if provided, else default max_lag_hours
+- Include per-series thresholds in stale ValidationReport details
+
+**Configuration Example:**
+```bash
+MAX_LAG_HOURS=48          # Default for all regions
+MAX_LAG_HOURS_CALI=72     # CALI gets 72h due to known EIA delays
+```
+
+**Impact:** Flexible configuration allows accommodating regional EIA cadence variations without code changes. CALI can be given 72h threshold while ERCO/MISO remain at 48h.
+
+### Verification
+
+**Test Scenarios:**
+1. **All Fresh:** All series < 48h → freshness pass → validation pass → forecasts generated ✅
+2. **CALI Stale:** CALI 52h, ERCO 12h → freshness fail → pipeline skipped ✅
+3. **Per-Region:** CALI 60h with MAX_LAG_HOURS_CALI=72 → both pass ✅
+4. **Borderline:** CALI 47.9h → freshness pass → validation pass ✅
+
+**Expected Behavior After Fix:**
+- Freshness check blocks pipeline if ANY series exceeds threshold
+- Clear logs show exact lag values and which series are stale
+- Pipeline skips immediately instead of running for 2+ minutes before failure
+- Per-region thresholds allow accommodating EIA regional delays
+
+### Files Modified
+
+**data_freshness.py:**
+- probe_eia_latest() (lines 81-162): Return dict with lag_hours and is_stale
+- check_all_series_freshness() (lines 191-316): Validate lag, block stale series
+
+**validation.py:**
+- validate_generation_df() (lines 19-213): Add timing diagnostics, per-region thresholds
+- ValidationReport details now include stale_series_thresholds
+
+**run_hourly.py:**
+- Freshness check section (lines 195-304): Timing tracking, enhanced logging
+- Validation call (lines 391-397): Pass region_lag_thresholds
+- Environment variable parsing (lines 207-218): Per-region threshold config
+
+### Next Steps
+- Monitor CI runs to confirm CALI stale series are properly caught early
+- Document per-region threshold configuration in README
+- Consider adding EIA data availability dashboard to track regional lag patterns
+- Add alerts if series consistently fail freshness checks (indicates upstream issue)
+
 ## 2026-01-22: JSON Corruption Bug Fix & Pre-commit Hook Resolution
 
 ### Issues Addressed

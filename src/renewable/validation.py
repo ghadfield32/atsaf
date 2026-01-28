@@ -22,6 +22,7 @@ def validate_generation_df(
     max_lag_hours: int = 3,
     max_missing_ratio: float = 0.02,
     expected_series: Optional[Iterable[str]] = None,
+    region_lag_thresholds: Optional[dict[str, int]] = None,
 ) -> ValidationReport:
     required = {"unique_id", "ds", "y"}
     missing_cols = required - set(df.columns)
@@ -54,7 +55,7 @@ def validate_generation_df(
         )
 
     # Check for negative values and log warning (but allow to pass)
-    # Dataset builder will handle negatives according to configured policy
+    # Dataset builder will handle negatives per configured policy
     if (work["y"] < 0).any():
         import logging
         logger = logging.getLogger(__name__)
@@ -69,7 +70,8 @@ def validate_generation_df(
         )
 
         logger.warning(
-            "[validation][NEGATIVE] Found %d negative values (%.1f%%) across %d series",
+            "[validation][NEGATIVE] Found %d negative values "
+            "(%.1f%%) across %d series",
             neg_count,
             100 * neg_count / len(work),
             len(by_series)
@@ -78,7 +80,8 @@ def validate_generation_df(
         for _, row in by_series.iterrows():
             logger.warning(
                 "  Series %s: %d negative values, range=[%.1f, %.1f]",
-                row["unique_id"], row["count"], row["min_y"], row["max_y"]
+                row["unique_id"], row["count"],
+                row["min_y"], row["max_y"]
             )
 
         logger.info(
@@ -108,8 +111,26 @@ def validate_generation_df(
                 {"missing_series": missing_series, "present_series": present},
             )
 
-    now_utc = pd.Timestamp.now(tz="UTC").floor("h")
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Calculate timing with diagnostic logging
+    now_raw = pd.Timestamp.now(tz="UTC")
+    now_utc = now_raw.floor("h")
+    logger.info(
+        f"[validation][TIMING] now_utc={now_utc.isoformat()} "
+        f"(floored to hour)"
+    )
+    logger.info(
+        f"[validation][TIMING] now_raw={now_raw.isoformat()} "
+        f"(before floor)"
+    )
+
     max_ds = work["ds"].max()
+    logger.info(
+        f"[validation][TIMING] Overall max_ds={max_ds.isoformat()}"
+    )
+
     lag_hours = (now_utc - max_ds).total_seconds() / 3600.0
     if lag_hours > max_lag_hours:
         return ValidationReport(
@@ -122,16 +143,72 @@ def validate_generation_df(
             },
         )
 
+    # Per-series lag calculation with diagnostic logging
     series_max = work.groupby("unique_id")["ds"].max()
     series_lag = (now_utc - series_max).dt.total_seconds() / 3600.0
-    stale = series_lag[series_lag > max_lag_hours].sort_values(ascending=False)
+
+    # Check per-series with region-specific thresholds if provided
+    stale_series_dict = {}
+    for uid, max_ds_series in series_max.items():
+        series_lag_val = series_lag[uid]
+
+        # Extract region from unique_id (format: "REGION_FUEL")
+        region = uid.split("_")[0] if "_" in uid else None
+
+        # Use region-specific threshold if available, else default
+        threshold = max_lag_hours
+        if region_lag_thresholds and region in region_lag_thresholds:
+            threshold = region_lag_thresholds[region]
+
+        # Check if stale
+        is_stale = series_lag_val > threshold
+        status = "STALE" if is_stale else "OK"
+
+        # Log diagnosis
+        logger.info(
+            f"[validation][TIMING] {uid}: "
+            f"max_ds={max_ds_series.isoformat()} "
+            f"lag={series_lag_val:.1f}h "
+            f"(threshold={threshold}h) [{status}]"
+        )
+
+        if is_stale:
+            stale_series_dict[uid] = series_lag_val
+
+    # Convert to pandas Series for compatibility with existing code
+    if stale_series_dict:
+        import pandas as pd
+        stale = pd.Series(stale_series_dict).sort_values(ascending=False)
+    else:
+        stale = pd.Series(dtype=float)
     if not stale.empty:
+        # Include per-series timestamps for stale-series root cause.
+        stale_series = stale.head(10)
+        stale_max_ds = {
+            uid: series_max.loc[uid].isoformat()
+            for uid in stale_series.index
+        }
+
+        # Include per-series thresholds used
+        stale_thresholds = {}
+        for uid in stale_series.index:
+            region = uid.split("_")[0] if "_" in uid else None
+            if region_lag_thresholds and region in region_lag_thresholds:
+                stale_thresholds[uid] = region_lag_thresholds[region]
+            else:
+                stale_thresholds[uid] = max_lag_hours
+
         return ValidationReport(
             False,
             "Stale series found",
             {
-                "stale_series": stale.head(10).to_dict(),
+                "stale_series": stale_series.to_dict(),
+                "stale_series_max_ds": stale_max_ds,
+                "stale_series_thresholds": stale_thresholds,
+                "now_utc": now_utc.isoformat(),
+                "max_ds_overall": max_ds.isoformat(),
                 "max_lag_hours": max_lag_hours,
+                "region_lag_thresholds": region_lag_thresholds,
             },
         )
 

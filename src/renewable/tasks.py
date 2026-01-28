@@ -797,6 +797,9 @@ def run_full_pipeline(
     config: RenewablePipelineConfig,
     fetch_diagnostics: Optional[list[dict]] = None,
     skip_eda: bool = False,
+    *,
+    max_lag_hours: int = 48,
+    max_missing_ratio: float = 0.02,
 ) -> dict:
     """Run the complete renewable forecasting pipeline.
 
@@ -832,8 +835,8 @@ def run_full_pipeline(
     rep = validate_generation_df(
         generation_df,
         expected_series=expected_series,
-        max_missing_ratio=0.02,
-        max_lag_hours=48,  # choose a value consistent with EIA publishing lag
+        max_missing_ratio=max_missing_ratio,
+        max_lag_hours=max_lag_hours,  # choose a value consistent with EIA publishing lag
     )
     if not rep.ok:
         raise RuntimeError(f"[pipeline][generation_validation] {rep.message} details={rep.details}")

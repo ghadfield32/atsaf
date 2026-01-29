@@ -318,9 +318,15 @@ def check_all_series_freshness(
             status_str = "NEW" if is_new else "unchanged"
             if is_stale:
                 status_str += " (STALE)"
+            # Avoid formatting None lag_hours; surface missing lag explicitly.
+            if lag_hours is None:
+                lag_str = "unknown"
+            else:
+                lag_str = f"{lag_hours:.1f}h"
+            error_str = f" error={error}" if error else ""
             logger.info(
                 f"[freshness] {series_id}: prev={prev} current={current} "
-                f"lag={lag_hours:.1f}h ({status_str})"
+                f"lag={lag_str} ({status_str}){error_str}"
             )
 
     # 4. Check for stale series (blocks pipeline run)

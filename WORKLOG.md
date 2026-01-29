@@ -1,5 +1,10 @@
 # Work Log
 
+## Renewable Pipeline (Freshness log crash on None lag)
+- 2026-01-29 Done: Isolated TypeError to freshness logging formatting when probe times out and lag_hours is None.
+- 2026-01-29 Doing: Add explicit lag="unknown" logging and surface probe error in the per-series log line.
+- 2026-01-29 Next: Re-run hourly job to confirm timeout cases log cleanly without crashing.
+
 ## Renewable Forecast Diagnostics (ERCO_WND negatives)
 - 2026-01-13 Done: Added series/forecast diagnostics to log min/max, negatives, and missing values in generation data and forecasts.
 - 2026-01-14 Done: Added run_log diagnostics for negative forecast summaries and generation coverage to preserve samples after pipeline runs.

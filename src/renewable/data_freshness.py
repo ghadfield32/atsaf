@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import pandas as pd
 import requests
@@ -22,6 +23,12 @@ import requests
 from src.renewable.regions import get_eia_respondent
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_url(url: str) -> str:
+    parts = urlsplit(url)
+    q = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k.lower() != "api_key"]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(q), parts.fragment))
 
 
 @dataclass(frozen=True)
@@ -109,6 +116,7 @@ def probe_eia_latest(
         - 'is_stale': Bool if lag > max_lag_hours (if threshold provided)
         - 'error': Error message if probe failed, or None
     """
+    safe_url = None
     try:
         respondent = get_eia_respondent(region)
 
@@ -124,6 +132,9 @@ def probe_eia_latest(
         }
 
         base_url = "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/"
+        # Build a sanitized URL for logging without leaking the API key.
+        prepared = requests.Request("GET", base_url, params=params).prepare()
+        safe_url = _sanitize_url(prepared.url)
         resp = requests.get(base_url, params=params, timeout=timeout)
         resp.raise_for_status()
 
@@ -186,7 +197,8 @@ def probe_eia_latest(
         }
 
     except requests.RequestException as e:
-        logger.warning(f"[probe] {region}_{fuel_type}: API error: {e}")
+        url_msg = f" url={safe_url}" if safe_url else ""
+        logger.warning(f"[probe] {region}_{fuel_type}: API error: {e}{url_msg}")
         return {
             "timestamp": None,
             "lag_hours": None,

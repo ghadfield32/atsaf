@@ -64,7 +64,17 @@ class EIARenewableFetcher:
     MAX_RECORDS_PER_REQUEST = 5000
     RATE_LIMIT_DELAY = 0.2  # 5 requests/second max
 
-    def __init__(self, api_key: Optional[str] = None, *, timeout: int = 60, debug_env: bool = False):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        *,
+        timeout: int = 60,
+        debug_env: bool = False,
+        max_retries: int = 3,
+        backoff_factor: float = 1.0,
+        retry_statuses: Optional[tuple[int, ...]] = None,
+        debug_requests: bool = False,
+    ):
         """
         Initialize API key and configuration.
 
@@ -86,6 +96,10 @@ class EIARenewableFetcher:
             )
 
         self.timeout = timeout
+        self.max_retries = max_retries
+        self.backoff_factor = backoff_factor
+        self.retry_statuses = retry_statuses or (429, 500, 502, 503, 504)
+        self.debug_requests = debug_requests
         self.session = self._create_session()  # Add retry-enabled session
 
         # Debug without leaking the key
@@ -93,17 +107,24 @@ class EIARenewableFetcher:
             masked = self.api_key[:4] + "..." + self.api_key[-4:] if len(self.api_key) >= 8 else "***"
             logger.info("EIA_API_KEY loaded (masked): %s", masked)
             logger.info("Request timeout: %d seconds", self.timeout)
+        if debug_env or self.debug_requests:
+            logger.info(
+                "EIA retries configured: total=%s backoff=%s statuses=%s",
+                self.max_retries,
+                self.backoff_factor,
+                self.retry_statuses,
+            )
 
     def _create_session(self) -> requests.Session:
         """Create requests Session with retry logic for transient errors."""
         session = requests.Session()
         retries = Retry(
-            total=3,
-            backoff_factor=1.0,  # 1s, 2s, 4s between retries
-            status_forcelist=[429, 500, 502, 503, 504],  # Retry on server errors and rate limits
+            total=self.max_retries,
+            backoff_factor=self.backoff_factor,  # 1s, 2s, 4s between retries
+            status_forcelist=self.retry_statuses,  # Retry on server errors and rate limits
             allowed_methods=frozenset(["GET"]),
-            connect=3,  # Retry on connection errors
-            read=3,     # Retry on read timeouts
+            connect=self.max_retries,  # Retry on connection errors
+            read=self.max_retries,     # Retry on read timeouts
         )
         session.mount("https://", HTTPAdapter(max_retries=retries))
         return session
@@ -178,6 +199,28 @@ class EIARenewableFetcher:
         # ✅ FIX: initialize loop diagnostics counters
         page_count = 0
         total_hint: Optional[int] = None
+        request_attempts = 0
+        request_failures = 0
+        status_counts: dict[int, int] = {}
+        last_error: Optional[str] = None
+        last_url: Optional[str] = None
+
+        if diag is not None:
+            diag.update({
+                "region": region,
+                "fuel_type": fuel_type,
+                "start_date": start_date,
+                "end_date": end_date,
+                "total_records": None,
+                "pages": 0,
+                "rows_parsed": 0,
+                "empty": None,
+                "request_attempts": 0,
+                "request_failures": 0,
+                "status_counts": {},
+                "last_request_url": None,
+                "last_error": None,
+            })
 
         while True:
             params = {
@@ -194,11 +237,64 @@ class EIARenewableFetcher:
                 "sort[0][direction]": "asc",
             }
 
-            resp = self.session.get(self.BASE_URL, params=params, timeout=self.timeout)
-            resp.raise_for_status()
-            payload = resp.json()
+            # Prepare a sanitized URL for logging and diagnostics.
+            req = requests.Request("GET", self.BASE_URL, params=params)
+            prepared = self.session.prepare_request(req)
+            safe_url = _sanitize_url(prepared.url)
 
-            records, meta = self._extract_eia_response(payload, request_url=resp.url)
+            request_attempts += 1
+            start_ts = time.monotonic()
+            try:
+                resp = self.session.send(prepared, timeout=self.timeout)
+                elapsed = time.monotonic() - start_ts
+                last_url = safe_url
+                status_counts[resp.status_code] = status_counts.get(resp.status_code, 0) + 1
+
+                if self.debug_requests or debug:
+                    logger.info(
+                        "[fetch_region][REQUEST_OK] region=%s fuel=%s status=%s elapsed=%.2fs offset=%s url=%s",
+                        region, fuel_type, resp.status_code, elapsed, offset, safe_url
+                    )
+
+                resp.raise_for_status()
+                payload = resp.json()
+            except requests.RequestException as e:
+                elapsed = time.monotonic() - start_ts
+                request_failures += 1
+                last_error = str(e)
+                if self.debug_requests or debug:
+                    logger.warning(
+                        "[fetch_region][REQUEST_FAIL] region=%s fuel=%s offset=%s elapsed=%.2fs error=%s url=%s",
+                        region, fuel_type, offset, elapsed, last_error, safe_url
+                    )
+                if diag is not None:
+                    diag.update({
+                        "request_attempts": request_attempts,
+                        "request_failures": request_failures,
+                        "status_counts": status_counts,
+                        "last_request_url": safe_url,
+                        "last_error": last_error,
+                    })
+                raise
+            except Exception as e:
+                elapsed = time.monotonic() - start_ts
+                last_error = f"{type(e).__name__}: {e}"
+                if self.debug_requests or debug:
+                    logger.warning(
+                        "[fetch_region][REQUEST_ERROR] region=%s fuel=%s offset=%s elapsed=%.2fs error=%s url=%s",
+                        region, fuel_type, offset, elapsed, last_error, safe_url
+                    )
+                if diag is not None:
+                    diag.update({
+                        "request_attempts": request_attempts,
+                        "request_failures": request_failures,
+                        "status_counts": status_counts,
+                        "last_request_url": safe_url,
+                        "last_error": last_error,
+                    })
+                raise
+
+            records, meta = self._extract_eia_response(payload, request_url=safe_url)
 
             page_count += 1
             if total_hint is None:
@@ -225,6 +321,11 @@ class EIARenewableFetcher:
                         "pages": page_count,
                         "rows_parsed": 0,
                         "empty": True,
+                        "request_attempts": request_attempts,
+                        "request_failures": request_failures,
+                        "status_counts": status_counts,
+                        "last_request_url": last_url,
+                        "last_error": last_error,
                     })
                 return pd.DataFrame(columns=["ds", "value", "region", "fuel_type"])
 
@@ -289,6 +390,11 @@ class EIARenewableFetcher:
                 "pages": page_count,
                 "rows_parsed": int(len(df)),
                 "empty": bool(len(df) == 0),
+                "request_attempts": request_attempts,
+                "request_failures": request_failures,
+                "status_counts": status_counts,
+                "last_request_url": last_url,
+                "last_error": last_error,
             })
 
         return df[["ds", "value", "region", "fuel_type"]]
@@ -327,19 +433,30 @@ class EIARenewableFetcher:
 
         all_dfs: list[pd.DataFrame] = []
         failed_regions: list[tuple[str, str]] = []  # (region, error_msg)
+        diag_map: Optional[dict[str, dict]] = None
 
-        def _run_one(region: str) -> tuple[str, pd.DataFrame, dict]:
-            d: dict = {}
+        if diagnostics is not None:
+            diag_map = {region: {} for region in regions}
+
+        def _run_one(region: str) -> tuple[str, pd.DataFrame, Optional[dict]]:
+            d = diag_map[region] if diag_map is not None else None
             df = self.fetch_region(region, fuel_type, start_date, end_date, diag=d)
             return region, df, d
+
+        if self.debug_requests:
+            logger.info(
+                "[fetch_all_regions] fuel=%s regions=%s max_workers=%d",
+                fuel_type, regions, max_workers,
+            )
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(_run_one, region): region for region in regions}
             for future in as_completed(futures):
                 region = futures[future]
+                d = diag_map.get(region) if diag_map is not None else None
                 try:
                     _, df, d = future.result()
-                    if diagnostics is not None:
+                    if diagnostics is not None and d is not None:
                         diagnostics.append(d)
 
                     if len(df) > 0:
@@ -351,13 +468,15 @@ class EIARenewableFetcher:
                 except Exception as e:
                     failed_regions.append((region, str(e)))
                     if diagnostics is not None:
-                        diagnostics.append({
-                            "region": region,
-                            "fuel_type": fuel_type,
-                            "start_date": start_date,
-                            "end_date": end_date,
-                            "error": str(e),
-                        })
+                        if d is None:
+                            d = {
+                                "region": region,
+                                "fuel_type": fuel_type,
+                                "start_date": start_date,
+                                "end_date": end_date,
+                            }
+                        d.setdefault("error", str(e))
+                        diagnostics.append(d)
                     print(f"[FAIL] {region}: {e}")
 
         # Explicit validation: require at least one successful region

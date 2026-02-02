@@ -11,6 +11,7 @@ Idempotent tasks for:
 
 import argparse
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -164,9 +165,39 @@ def fetch_renewable_data(
     output_path = config.generation_path()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    def _env_int(name: str, default: int) -> int:
+        raw = os.getenv(name)
+        if raw is None or raw == "":
+            return default
+        try:
+            return int(raw)
+        except ValueError:
+            logger.warning("[fetch_generation] Invalid %s=%r; using %s", name, raw, default)
+            return default
+
+    def _env_float(name: str, default: float) -> float:
+        raw = os.getenv(name)
+        if raw is None or raw == "":
+            return default
+        try:
+            return float(raw)
+        except ValueError:
+            logger.warning("[fetch_generation] Invalid %s=%r; using %s", name, raw, default)
+            return default
+
+    def _env_bool(name: str, default: bool) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        raw = raw.strip().lower()
+        if raw in {"1", "true", "yes", "y", "on"}:
+            return True
+        if raw in {"0", "false", "no", "n", "off"}:
+            return False
+        logger.warning("[fetch_generation] Invalid %s=%r; using %s", name, raw, default)
+        return default
+
     def _log_generation_summary(df: pd.DataFrame, source: str) -> None:
-
-
         expected_series = {
             f"{region}_{fuel}" for region in config.regions for fuel in config.fuel_types
         }
@@ -209,8 +240,39 @@ def fetch_renewable_data(
 
     logger.info(f"[fetch_generation] Fetching {config.fuel_types} for {config.regions}")
 
+    # Allow EIA fetch behavior to be tuned via env for diagnostics.
+    timeout = _env_int("EIA_TIMEOUT_SECONDS", 90)
+    max_workers = _env_int("EIA_MAX_WORKERS", 3)
+    max_retries = _env_int("EIA_MAX_RETRIES", 3)
+    backoff_factor = _env_float("EIA_BACKOFF_FACTOR", 1.0)
+    rate_limit_delay = _env_float("EIA_RATE_LIMIT_DELAY", EIARenewableFetcher.RATE_LIMIT_DELAY)
+    debug_requests = _env_bool("EIA_DEBUG_REQUESTS", False)
+
+    if max_workers < 1:
+        logger.warning("[fetch_generation] EIA_MAX_WORKERS=%s is invalid; using 1", max_workers)
+        max_workers = 1
+    if timeout < 1:
+        logger.warning("[fetch_generation] EIA_TIMEOUT_SECONDS=%s is invalid; using 60", timeout)
+        timeout = 60
+
+    logger.info(
+        "[fetch_generation] EIA settings: timeout=%ss max_workers=%s retries=%s backoff=%s rate_limit_delay=%s debug_requests=%s",
+        timeout,
+        max_workers,
+        max_retries,
+        backoff_factor,
+        rate_limit_delay,
+        debug_requests,
+    )
+
     # Use longer timeout (90s) to handle slow EIA API responses
-    fetcher = EIARenewableFetcher(timeout=90)
+    fetcher = EIARenewableFetcher(
+        timeout=timeout,
+        max_retries=max_retries,
+        backoff_factor=backoff_factor,
+        debug_requests=debug_requests,
+    )
+    fetcher.RATE_LIMIT_DELAY = rate_limit_delay
     all_dfs = []
 
     for fuel_type in config.fuel_types:
@@ -219,6 +281,7 @@ def fetch_renewable_data(
             start_date=config.start_date,
             end_date=config.end_date,
             regions=config.regions,
+            max_workers=max_workers,
             diagnostics=fetch_diagnostics,
         )
         all_dfs.append(df)

@@ -144,8 +144,8 @@ jobs:
       - name: Commit updated artifacts
         if: steps.pipeline.outputs.status != 'skipped'
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "ghadfield32"
+          git config user.email "ghadfield32@gmail.com"
           git add data/renewable/generation.parquet \
             data/renewable/weather.parquet \
             data/renewable/forecasts.parquet \

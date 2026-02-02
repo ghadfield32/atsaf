@@ -1,5 +1,10 @@
 # Work Log
 
+## Renewable Pipeline (EIA 504 fetch failures)
+- 2026-02-02 Done: Added request-level diagnostics (status counts, last URL, retries) and surfaced EIA fetch settings from env.
+- 2026-02-02 Done: Added sanitized URL logging for freshness probes to pinpoint failing endpoints without leaking API keys.
+- 2026-02-02 Next: Re-run hourly job with EIA_DEBUG_REQUESTS=true and consider EIA_MAX_WORKERS=1 to confirm whether 504s persist.
+
 ## Renewable Pipeline (Freshness log crash on None lag)
 - 2026-01-29 Done: Isolated TypeError to freshness logging formatting when probe times out and lag_hours is None.
 - 2026-01-29 Doing: Add explicit lag="unknown" logging and surface probe error in the per-series log line.

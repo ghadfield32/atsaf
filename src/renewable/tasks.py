@@ -894,14 +894,118 @@ def run_full_pipeline(
     results["generation_rows"] = len(generation_df)
     results["series_count"] = generation_df["unique_id"].nunique()
 
-    from src.renewable.validation import validate_generation_df
+    from src.renewable.validation import (
+        validate_generation_df,
+        compute_per_series_gap_ratios,
+    )
 
     expected_series = [f"{r}_{f}" for r in config.regions for f in config.fuel_types]
+
+    # Step 1.5: Pre-validation gap analysis
+    # Compute per-series missing ratios BEFORE validation so we can decide
+    # which series to keep vs drop.  EIA regions sometimes have multi-week
+    # reporting outages (e.g. CAISO/CALI), and we should not let one bad
+    # region kill the entire pipeline.
+    gap_ratios = compute_per_series_gap_ratios(generation_df)
+    logger.info("[pipeline][GAP_ANALYSIS] Per-series gap ratios:")
+    for uid, info in sorted(gap_ratios.items()):
+        status = "OK" if info["missing_ratio"] <= max_missing_ratio else "EXCEEDS"
+        logger.info(
+            "  %s: %d/%d rows (%.1f%% missing, threshold=%.0f%%) [%s]",
+            uid,
+            info["actual_rows"],
+            info["expected_rows"],
+            100 * info["missing_ratio"],
+            100 * max_missing_ratio,
+            status,
+        )
+
+    # Identify series that exceed the missing-ratio threshold
+    series_to_drop = [
+        uid
+        for uid, info in gap_ratios.items()
+        if info["missing_ratio"] > max_missing_ratio
+    ]
+
+    if series_to_drop:
+        logger.warning(
+            "[pipeline][GAP_FILTER] Dropping %d series with "
+            "missing_ratio > %.0f%%: %s",
+            len(series_to_drop),
+            100 * max_missing_ratio,
+            series_to_drop,
+        )
+        for uid in series_to_drop:
+            info = gap_ratios[uid]
+            logger.warning(
+                "  %s: %.1f%% missing (%d of %d hours)",
+                uid,
+                100 * info["missing_ratio"],
+                info["missing_rows"],
+                info["expected_rows"],
+            )
+
+        # Filter generation data
+        generation_df = generation_df[
+            ~generation_df["unique_id"].isin(series_to_drop)
+        ].reset_index(drop=True)
+
+        # Update expected series list to match
+        expected_series = [s for s in expected_series if s not in series_to_drop]
+
+        # Minimum viable check: need at least 1 region × 1 fuel type = 2 series
+        min_viable = 2
+        if len(expected_series) < min_viable:
+            raise RuntimeError(
+                f"[pipeline][GAP_FILTER] Too few series remaining after gap "
+                f"filter: {len(expected_series)} < {min_viable}. "
+                f"Dropped: {series_to_drop}. "
+                f"All regions have excessive data gaps."
+            )
+
+        # Save filtered generation data so downstream parquet is consistent
+        generation_df.to_parquet(config.generation_path(), index=False)
+        logger.info(
+            "[pipeline][GAP_FILTER] Saved filtered generation: %s (%d rows, %d series)",
+            config.generation_path(),
+            len(generation_df),
+            generation_df["unique_id"].nunique(),
+        )
+
+        results["gap_filter"] = {
+            "series_dropped": series_to_drop,
+            "series_remaining": expected_series,
+            "gap_ratios": {
+                uid: round(info["missing_ratio"], 4)
+                for uid, info in gap_ratios.items()
+            },
+        }
+
+        logger.info(
+            "[pipeline][GAP_FILTER] Proceeding with %d series: %s",
+            len(expected_series),
+            expected_series,
+        )
+    else:
+        results["gap_filter"] = {
+            "series_dropped": [],
+            "series_remaining": expected_series,
+            "gap_ratios": {
+                uid: round(info["missing_ratio"], 4)
+                for uid, info in gap_ratios.items()
+            },
+        }
+
+    # Update result counts after any filtering
+    results["generation_rows"] = len(generation_df)
+    results["series_count"] = generation_df["unique_id"].nunique()
+
+    # Now run validation on (possibly filtered) data
     rep = validate_generation_df(
         generation_df,
         expected_series=expected_series,
         max_missing_ratio=max_missing_ratio,
-        max_lag_hours=max_lag_hours,  # choose a value consistent with EIA publishing lag
+        max_lag_hours=max_lag_hours,
         debug=validation_debug,
     )
     if not rep.ok:

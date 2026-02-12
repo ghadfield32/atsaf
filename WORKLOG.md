@@ -1,5 +1,13 @@
 # Work Log
 
+## Renewable Pipeline (CALI 358-hour EIA data gap crashing pipeline)
+- 2026-02-12 Done: Root-caused CI crash #538 to EIA/CAISO reporting outage: CALI missing data Jan 26 – Feb 10 (358h gap, 363 vs 721 rows). `validate_generation_df` triggers `max_missing_ratio=0.02` (CALI_SUN=49.65%) and kills entire pipeline — even though ERCO/MISO have complete data.
+- 2026-02-12 Done: Added `compute_per_series_gap_ratios()` to `validation.py` — diagnostic function returns per-series missing ratios without pass/fail decisions.
+- 2026-02-12 Done: Added Step 1.5 "GAP_FILTER" in `run_full_pipeline()` (`tasks.py`): drops series exceeding `max_missing_ratio`, saves filtered parquet, logs all decisions, fails only if remaining series < 2.
+- 2026-02-12 Done: Updated `run_hourly.py` post-pipeline validation to exclude gap-filtered series from `expected_series`, using `results["gap_filter"]["series_dropped"]`.
+- 2026-02-12 Done: Verified all 3 files compile and existing tests (25 pass) show no regressions; 13 pre-existing failures from prior refactoring unrelated to this change.
+- 2026-02-12 Next: Push and re-run hourly workflow to confirm CALI is dropped cleanly and ERCO+MISO proceed to forecasts.
+
 ## Renewable Pipeline (validation UnboundLocalError on pd)
 - 2026-02-12 Done: Root-caused CI crash to function-local `import pandas as pd` in `validate_generation_df`, which shadowed module `pd` and failed at first `pd.to_datetime(...)`.
 - 2026-02-12 Done: Added `VALIDATION_DEBUG` plumbing (`run_hourly.py` -> `tasks.py` -> `validation.py`) plus staged snapshots (schema/nulls/dtypes/ds-range/y-stats) for stepwise diagnosis without mutating data.

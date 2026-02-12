@@ -399,11 +399,26 @@ def run_hourly_pipeline() -> dict:
     gen_df = pd.read_parquet(gen_path)
     generation_coverage = _summarize_generation_coverage(gen_df)
 
+    # Respect series dropped by the pipeline's gap filter so that the
+    # post-pipeline validation uses the same expected-series list.
+    dropped_series = (
+        results.get("gap_filter", {}).get("series_dropped", [])
+    )
+    active_series = [
+        s for s in _expected_series(regions, fuel_types)
+        if s not in dropped_series
+    ]
+    if dropped_series:
+        print(
+            f"[validation] Excluding {len(dropped_series)} gap-filtered "
+            f"series from post-pipeline check: {dropped_series}"
+        )
+
     report = validate_generation_df(
         gen_df,
         max_lag_hours=max_lag_hours,
         max_missing_ratio=max_missing_ratio,
-        expected_series=_expected_series(regions, fuel_types),
+        expected_series=active_series,
         region_lag_thresholds=(
             region_lag_thresholds if region_lag_thresholds else None
         ),

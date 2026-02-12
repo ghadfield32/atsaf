@@ -102,6 +102,69 @@ def _log_validation_snapshot(work: pd.DataFrame, *, stage: str) -> None:
             )
 
 
+def compute_per_series_gap_ratios(
+    df: pd.DataFrame,
+) -> dict[str, dict]:
+    """Compute per-series missing-hour ratios and gap details.
+
+    This function does NOT make pass/fail decisions — it returns raw
+    diagnostics so the caller can decide which series to keep or drop.
+
+    Args:
+        df: DataFrame with columns [unique_id, ds, y]
+
+    Returns:
+        Dict mapping unique_id -> {
+            'actual_rows': int,
+            'expected_rows': int,
+            'missing_rows': int,
+            'missing_ratio': float,
+            'start': Timestamp,
+            'end': Timestamp,
+            'span_hours': float,
+        }
+    """
+    if df.empty:
+        return {}
+
+    work = df.copy()
+    work["ds"] = pd.to_datetime(work["ds"], errors="coerce", utc=True)
+
+    result = {}
+    for uid, group in work.groupby("unique_id"):
+        group = group.sort_values("ds")
+        start = group["ds"].iloc[0]
+        end = group["ds"].iloc[-1]
+        span_hours = (end - start).total_seconds() / 3600.0
+        expected = int(span_hours + 1)
+        actual = len(group)
+        missing = max(expected - actual, 0)
+        ratio = missing / max(expected, 1)
+
+        result[uid] = {
+            "actual_rows": actual,
+            "expected_rows": expected,
+            "missing_rows": missing,
+            "missing_ratio": ratio,
+            "start": start,
+            "end": end,
+            "span_hours": span_hours,
+        }
+
+        logger.info(
+            "[gap_analysis] %s: %d/%d rows (%.1f%% missing) span=%.0fh [%s to %s]",
+            uid,
+            actual,
+            expected,
+            100 * ratio,
+            span_hours,
+            start.isoformat(),
+            end.isoformat(),
+        )
+
+    return result
+
+
 def validate_generation_df(
     df: pd.DataFrame,
     *,

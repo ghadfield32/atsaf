@@ -19,6 +19,42 @@ class ValidationReport:
     details: dict
 
 
+def _detect_time_gaps(df: pd.DataFrame, uid: str, max_gaps_to_report: int = 5) -> list[dict]:
+    """Detect gaps in hourly time series and return largest gaps.
+
+    Args:
+        df: DataFrame with 'ds' column (datetime)
+        uid: unique_id for logging
+        max_gaps_to_report: Maximum number of gaps to include in result
+
+    Returns:
+        List of gap dicts with {start, end, hours_missing}
+    """
+    if df.empty or len(df) < 2:
+        return []
+
+    df_sorted = df.sort_values("ds").reset_index(drop=True)
+    gaps = []
+
+    for i in range(len(df_sorted) - 1):
+        current_ds = df_sorted.loc[i, "ds"]
+        next_ds = df_sorted.loc[i + 1, "ds"]
+        gap_hours = (next_ds - current_ds).total_seconds() / 3600.0
+
+        # If gap is > 1 hour, we have missing data
+        if gap_hours > 1.1:  # Allow small floating point tolerance
+            missing_hours = int(gap_hours) - 1
+            gaps.append({
+                "gap_start": current_ds,
+                "gap_end": next_ds,
+                "missing_hours": missing_hours,
+            })
+
+    # Sort by missing hours (largest first) and return top N
+    gaps_sorted = sorted(gaps, key=lambda x: x["missing_hours"], reverse=True)
+    return gaps_sorted[:max_gaps_to_report]
+
+
 def _log_validation_snapshot(work: pd.DataFrame, *, stage: str) -> None:
     """Emit compact debug state for stepwise validation tracing."""
     if work.empty:
@@ -278,6 +314,29 @@ def validate_generation_df(
         actual = len(group)
         missing = max(expected - actual, 0)
         missing_ratios[uid] = missing / max(expected, 1)
+
+        # DEBUG: Log per-series data coverage details
+        time_span_hours = (end - start).total_seconds() / 3600.0
+        logger.info(
+            f"[validation][COVERAGE] {uid}: "
+            f"start={start.isoformat()} end={end.isoformat()} "
+            f"span={time_span_hours:.1f}h actual={actual} expected={expected} "
+            f"missing={missing} ratio={missing_ratios[uid]:.3f}"
+        )
+
+        # DEBUG: Detect and log largest time gaps if missing data
+        if missing > 0:
+            gaps = _detect_time_gaps(group, uid, max_gaps_to_report=3)
+            if gaps:
+                logger.warning(
+                    f"[validation][GAPS] {uid}: Found {len(gaps)} largest gaps "
+                    f"(total {sum(g['missing_hours'] for g in gaps)} hours missing)"
+                )
+                for idx, gap in enumerate(gaps, 1):
+                    logger.warning(
+                        f"  Gap #{idx}: {gap['gap_start'].isoformat()} to "
+                        f"{gap['gap_end'].isoformat()} ({gap['missing_hours']} hours)"
+                    )
 
     worst_uid = max(missing_ratios, key=missing_ratios.get)
     worst_ratio = missing_ratios[worst_uid]

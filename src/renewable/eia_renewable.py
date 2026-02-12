@@ -361,6 +361,28 @@ class EIARenewableFetcher:
 
         df = df.dropna(subset=["ds", "value"]).sort_values("ds").reset_index(drop=True)
 
+        # DEBUG: Log data coverage details
+        if not df.empty:
+            actual_start = df["ds"].min()
+            actual_end = df["ds"].max()
+            actual_span_hours = (actual_end - actual_start).total_seconds() / 3600.0
+            requested_start_dt = pd.to_datetime(f"{start_date}T00", utc=True).tz_localize(None)
+            requested_end_dt = pd.to_datetime(f"{end_date}T23", utc=True).tz_localize(None)
+            requested_span_hours = (requested_end_dt - requested_start_dt).total_seconds() / 3600.0
+            expected_records = int(requested_span_hours + 1)
+            coverage_pct = 100 * len(df) / max(expected_records, 1)
+
+            logger.info(
+                "[fetch_region][DATA_COVERAGE] region=%s fuel=%s "
+                "requested=[%s to %s] (%.1fh) "
+                "actual=[%s to %s] (%.1fh) "
+                "records=%d/%d (%.1f%% coverage)",
+                region, fuel_type,
+                start_date, end_date, requested_span_hours,
+                actual_start.isoformat(), actual_end.isoformat(), actual_span_hours,
+                len(df), expected_records, coverage_pct
+            )
+
         # Log negative values for investigation (but don't clamp - let dataset builder handle)
         neg_mask = df["value"] < 0
         if neg_mask.any():

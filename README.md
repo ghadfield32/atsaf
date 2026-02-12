@@ -269,6 +269,7 @@ python -m src.renewable.jobs.run_hourly
 | `RENEWABLE_HORIZON_PRESET` | - | Quick preset: `24h`, `48h`, `72h` |
 | `ENABLE_INTERPRETABILITY` | `true` | Run LightGBM SHAP analysis |
 | `MAX_LAG_HOURS` | `48` | Max acceptable data staleness |
+| `VALIDATION_DEBUG` | `false` | Emit stepwise validation snapshots (schema/nulls/time/value stats) |
 
 ---
 

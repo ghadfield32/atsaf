@@ -1,5 +1,11 @@
 # Work Log
 
+## Renewable Pipeline (validation UnboundLocalError on pd)
+- 2026-02-12 Done: Root-caused CI crash to function-local `import pandas as pd` in `validate_generation_df`, which shadowed module `pd` and failed at first `pd.to_datetime(...)`.
+- 2026-02-12 Done: Added `VALIDATION_DEBUG` plumbing (`run_hourly.py` -> `tasks.py` -> `validation.py`) plus staged snapshots (schema/nulls/dtypes/ds-range/y-stats) for stepwise diagnosis without mutating data.
+- 2026-02-12 Doing: Added regression tests for stale-series branch execution and debug snapshot emission to prevent scoping regressions.
+- 2026-02-12 Next: Re-run hourly workflow with `VALIDATION_DEBUG=true` to capture detailed state if any post-fix validation issue remains.
+
 ## Renewable Pipeline (EIA 504 fetch failures)
 - 2026-02-02 Done: Added request-level diagnostics (status counts, last URL, retries) and surfaced EIA fetch settings from env.
 - 2026-02-02 Done: Added sanitized URL logging for freshness probes to pinpoint failing endpoints without leaking API keys.

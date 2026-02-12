@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -16,6 +19,53 @@ class ValidationReport:
     details: dict
 
 
+def _log_validation_snapshot(work: pd.DataFrame, *, stage: str) -> None:
+    """Emit compact debug state for stepwise validation tracing."""
+    if work.empty:
+        logger.warning("[validation][DEBUG][%s] rows=0 (empty frame)", stage)
+        return
+
+    null_counts = {col: int(work[col].isna().sum()) for col in work.columns}
+    dtypes = {col: str(dtype) for col, dtype in work.dtypes.items()}
+    sample_uids = (
+        work["unique_id"].astype(str).drop_duplicates().sort_values().head(5).tolist()
+        if "unique_id" in work.columns
+        else []
+    )
+
+    logger.warning(
+        "[validation][DEBUG][%s] rows=%d cols=%s",
+        stage,
+        len(work),
+        list(work.columns),
+    )
+    logger.warning("[validation][DEBUG][%s] dtypes=%s", stage, dtypes)
+    logger.warning("[validation][DEBUG][%s] null_counts=%s", stage, null_counts)
+    logger.warning("[validation][DEBUG][%s] unique_id_sample=%s", stage, sample_uids)
+
+    if "ds" in work.columns:
+        ds_non_null = work["ds"].dropna()
+        if not ds_non_null.empty:
+            logger.warning(
+                "[validation][DEBUG][%s] ds_range=[%s, %s]",
+                stage,
+                ds_non_null.min(),
+                ds_non_null.max(),
+            )
+
+    if "y" in work.columns:
+        y_non_null = pd.to_numeric(work["y"], errors="coerce").dropna()
+        if not y_non_null.empty:
+            logger.warning(
+                "[validation][DEBUG][%s] y_stats=min=%.3f max=%.3f mean=%.3f neg=%d",
+                stage,
+                float(y_non_null.min()),
+                float(y_non_null.max()),
+                float(y_non_null.mean()),
+                int((y_non_null < 0).sum()),
+            )
+
+
 def validate_generation_df(
     df: pd.DataFrame,
     *,
@@ -23,6 +73,7 @@ def validate_generation_df(
     max_missing_ratio: float = 0.02,
     expected_series: Optional[Iterable[str]] = None,
     region_lag_thresholds: Optional[dict[str, int]] = None,
+    debug: bool = False,
 ) -> ValidationReport:
     required = {"unique_id", "ds", "y"}
     missing_cols = required - set(df.columns)
@@ -38,7 +89,12 @@ def validate_generation_df(
 
     work = df.copy()
 
+    if debug:
+        _log_validation_snapshot(work, stage="raw_input")
+
     work["ds"] = pd.to_datetime(work["ds"], errors="coerce", utc=True)
+    if debug:
+        _log_validation_snapshot(work, stage="after_ds_parse")
     if work["ds"].isna().any():
         return ValidationReport(
             False,
@@ -47,6 +103,8 @@ def validate_generation_df(
         )
 
     work["y"] = pd.to_numeric(work["y"], errors="coerce")
+    if debug:
+        _log_validation_snapshot(work, stage="after_y_parse")
     if work["y"].isna().any():
         return ValidationReport(
             False,
@@ -57,9 +115,6 @@ def validate_generation_df(
     # Check for negative values and log warning (but allow to pass)
     # Dataset builder will handle negatives per configured policy
     if (work["y"] < 0).any():
-        import logging
-        logger = logging.getLogger(__name__)
-
         neg_mask = work["y"] < 0
         neg_count = int(neg_mask.sum())
         by_series = (
@@ -110,9 +165,12 @@ def validate_generation_df(
                 "Missing expected series",
                 {"missing_series": missing_series, "present_series": present},
             )
-
-    import logging
-    logger = logging.getLogger(__name__)
+    if debug:
+        logger.warning(
+            "[validation][DEBUG] expected_series_count=%d present_series_count=%d",
+            len(set(expected_series)) if expected_series else 0,
+            work["unique_id"].nunique(),
+        )
 
     # Calculate timing with diagnostic logging
     now_raw = pd.Timestamp.now(tz="UTC")
@@ -177,7 +235,6 @@ def validate_generation_df(
 
     # Convert to pandas Series for compatibility with existing code
     if stale_series_dict:
-        import pandas as pd
         stale = pd.Series(stale_series_dict).sort_values(ascending=False)
     else:
         stale = pd.Series(dtype=float)

@@ -43,6 +43,13 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _expected_series(regions: list[str], fuel_types: list[str]) -> list[str]:
     return [f"{region}_{fuel}" for region in regions for fuel in fuel_types]
 
@@ -201,6 +208,9 @@ def run_hourly_pipeline() -> dict:
     # Validation thresholds (used in freshness check + validation)
     max_lag_hours = _env_int("MAX_LAG_HOURS", 48)
     max_missing_ratio = _env_float("MAX_MISSING_RATIO", 0.02)
+    validation_debug = _env_bool("VALIDATION_DEBUG", False)
+    if validation_debug:
+        print("[config] Validation debug snapshots enabled (VALIDATION_DEBUG=true)")
 
     # Per-region lag threshold overrides (optional)
     region_lag_thresholds = {}
@@ -368,6 +378,7 @@ def run_hourly_pipeline() -> dict:
         skip_eda=skip_eda,
         max_lag_hours=max_lag_hours,
         max_missing_ratio=max_missing_ratio,
+        validation_debug=validation_debug,
     )
 
     # Validation timing
@@ -396,6 +407,7 @@ def run_hourly_pipeline() -> dict:
         region_lag_thresholds=(
             region_lag_thresholds if region_lag_thresholds else None
         ),
+        debug=validation_debug,
     )
 
     forecasts_df = pd.read_parquet(cfg.forecasts_path())
@@ -457,6 +469,7 @@ def run_hourly_pipeline() -> dict:
             "details": report.details,
             "max_lag_hours": max_lag_hours,
             "max_missing_ratio": max_missing_ratio,
+            "validation_debug": validation_debug,
         },
         "diagnostics": {
             "fetch": fetch_diagnostics,

@@ -1,5 +1,5 @@
 {
-  "run_at_utc": "2026-02-13T14:50:40.917584+00:00",
+  "run_at_utc": "2026-02-13T15:48:57.344439+00:00",
   "config": {
     "regions": [
       "CALI",
@@ -41,7 +41,7 @@
         "MISO_WND": 0.0
       }
     },
-    "weather_rows": 2349,
+    "weather_rows": 2352,
     "eda": {
       "output_dir": "data/renewable/eda",
       "negative_policy": "pass_through",
@@ -69,27 +69,27 @@
       ]
     },
     "best_model": "AutoARIMA",
-    "best_rmse": 4416.1973543427275,
+    "best_rmse": 4522.140197284818,
     "baseline": {
       "model": "AutoARIMA",
-      "rmse_mean": 3681.659703427948,
-      "rmse_std": 2607.282307178117,
-      "drift_threshold_rmse": 8896.224317784183,
+      "rmse_mean": 3748.8779062459744,
+      "rmse_std": 2703.5778216408976,
+      "drift_threshold_rmse": 9156.033549527769,
       "n_windows": 8
     },
     "leaderboard": [
       {
         "model": "AutoARIMA",
-        "rmse": 4416.1973543427275,
-        "mae": 3026.769897028052,
+        "rmse": 4522.140197284818,
+        "mae": 3088.638755729459,
         "valid_rows": 192,
-        "coverage_80": 0.8125,
-        "coverage_95": 0.9375
+        "coverage_80": 0.796875,
+        "coverage_95": 0.9270833333333334
       },
       {
         "model": "AutoETS",
-        "rmse": 4851.725631580335,
-        "mae": 3351.301232871307,
+        "rmse": 4851.725631580377,
+        "mae": 3351.301232871445,
         "valid_rows": 192,
         "coverage_80": 0.8020833333333334,
         "coverage_95": 0.9114583333333334
@@ -112,8 +112,8 @@
       },
       {
         "model": "MSTL_ARIMA",
-        "rmse": 5568.736109432293,
-        "mae": 3468.828162134699,
+        "rmse": 5573.916993296297,
+        "mae": 3462.4490499566223,
         "valid_rows": 192,
         "coverage_80": 0.7760416666666666,
         "coverage_95": 0.859375
@@ -160,23 +160,6 @@
     },
     "fetch_diagnostics": [
       {
-        "region": "MISO",
-        "fuel_type": "WND",
-        "start_date": "2026-01-14",
-        "end_date": "2026-02-13",
-        "total_records": 721,
-        "pages": 1,
-        "rows_parsed": 721,
-        "empty": false,
-        "request_attempts": 1,
-        "request_failures": 0,
-        "status_counts": {
-          "200": 1
-        },
-        "last_request_url": "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/?data%5B%5D=value&facets%5Brespondent%5D%5B%5D=MISO&facets%5Bfueltype%5D%5B%5D=WND&frequency=hourly&start=2026-01-14T00&end=2026-02-13T23&length=5000&offset=0&sort%5B0%5D%5Bcolumn%5D=period&sort%5B0%5D%5Bdirection%5D=asc",
-        "last_error": null
-      },
-      {
         "region": "CALI",
         "fuel_type": "WND",
         "start_date": "2026-01-14",
@@ -194,6 +177,23 @@
         "last_error": null
       },
       {
+        "region": "MISO",
+        "fuel_type": "WND",
+        "start_date": "2026-01-14",
+        "end_date": "2026-02-13",
+        "total_records": 721,
+        "pages": 1,
+        "rows_parsed": 721,
+        "empty": false,
+        "request_attempts": 1,
+        "request_failures": 0,
+        "status_counts": {
+          "200": 1
+        },
+        "last_request_url": "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/?data%5B%5D=value&facets%5Brespondent%5D%5B%5D=MISO&facets%5Bfueltype%5D%5B%5D=WND&frequency=hourly&start=2026-01-14T00&end=2026-02-13T23&length=5000&offset=0&sort%5B0%5D%5Bcolumn%5D=period&sort%5B0%5D%5Bdirection%5D=asc",
+        "last_error": null
+      },
+      {
         "region": "ERCO",
         "fuel_type": "WND",
         "start_date": "2026-01-14",
@@ -208,6 +208,23 @@
           "200": 1
         },
         "last_request_url": "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/?data%5B%5D=value&facets%5Brespondent%5D%5B%5D=ERCO&facets%5Bfueltype%5D%5B%5D=WND&frequency=hourly&start=2026-01-14T00&end=2026-02-13T23&length=5000&offset=0&sort%5B0%5D%5Bcolumn%5D=period&sort%5B0%5D%5Bdirection%5D=asc",
+        "last_error": null
+      },
+      {
+        "region": "CALI",
+        "fuel_type": "SUN",
+        "start_date": "2026-01-14",
+        "end_date": "2026-02-13",
+        "total_records": 363,
+        "pages": 1,
+        "rows_parsed": 363,
+        "empty": false,
+        "request_attempts": 1,
+        "request_failures": 0,
+        "status_counts": {
+          "200": 1
+        },
+        "last_request_url": "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/?data%5B%5D=value&facets%5Brespondent%5D%5B%5D=CISO&facets%5Bfueltype%5D%5B%5D=SUN&frequency=hourly&start=2026-01-14T00&end=2026-02-13T23&length=5000&offset=0&sort%5B0%5D%5Bcolumn%5D=period&sort%5B0%5D%5Bdirection%5D=asc",
         "last_error": null
       },
       {
@@ -242,23 +259,6 @@
           "200": 1
         },
         "last_request_url": "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/?data%5B%5D=value&facets%5Brespondent%5D%5B%5D=MISO&facets%5Bfueltype%5D%5B%5D=SUN&frequency=hourly&start=2026-01-14T00&end=2026-02-13T23&length=5000&offset=0&sort%5B0%5D%5Bcolumn%5D=period&sort%5B0%5D%5Bdirection%5D=asc",
-        "last_error": null
-      },
-      {
-        "region": "CALI",
-        "fuel_type": "SUN",
-        "start_date": "2026-01-14",
-        "end_date": "2026-02-13",
-        "total_records": 363,
-        "pages": 1,
-        "rows_parsed": 363,
-        "empty": false,
-        "request_attempts": 1,
-        "request_failures": 0,
-        "status_counts": {
-          "200": 1
-        },
-        "last_request_url": "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/?data%5B%5D=value&facets%5Brespondent%5D%5B%5D=CISO&facets%5Bfueltype%5D%5B%5D=SUN&frequency=hourly&start=2026-01-14T00&end=2026-02-13T23&length=5000&offset=0&sort%5B0%5D%5Bcolumn%5D=period&sort%5B0%5D%5Bdirection%5D=asc",
         "last_error": null
       }
     ]
@@ -270,7 +270,7 @@
       "row_count": 2884,
       "series_count": 4,
       "max_ds": "2026-02-13T00:00:00+00:00",
-      "lag_hours": 14.0,
+      "lag_hours": 15.0,
       "worst_missing_ratio": 0.0
     },
     "max_lag_hours": 48,
@@ -279,23 +279,6 @@
   },
   "diagnostics": {
     "fetch": [
-      {
-        "region": "MISO",
-        "fuel_type": "WND",
-        "start_date": "2026-01-14",
-        "end_date": "2026-02-13",
-        "total_records": 721,
-        "pages": 1,
-        "rows_parsed": 721,
-        "empty": false,
-        "request_attempts": 1,
-        "request_failures": 0,
-        "status_counts": {
-          "200": 1
-        },
-        "last_request_url": "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/?data%5B%5D=value&facets%5Brespondent%5D%5B%5D=MISO&facets%5Bfueltype%5D%5B%5D=WND&frequency=hourly&start=2026-01-14T00&end=2026-02-13T23&length=5000&offset=0&sort%5B0%5D%5Bcolumn%5D=period&sort%5B0%5D%5Bdirection%5D=asc",
-        "last_error": null
-      },
       {
         "region": "CALI",
         "fuel_type": "WND",
@@ -314,6 +297,23 @@
         "last_error": null
       },
       {
+        "region": "MISO",
+        "fuel_type": "WND",
+        "start_date": "2026-01-14",
+        "end_date": "2026-02-13",
+        "total_records": 721,
+        "pages": 1,
+        "rows_parsed": 721,
+        "empty": false,
+        "request_attempts": 1,
+        "request_failures": 0,
+        "status_counts": {
+          "200": 1
+        },
+        "last_request_url": "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/?data%5B%5D=value&facets%5Brespondent%5D%5B%5D=MISO&facets%5Bfueltype%5D%5B%5D=WND&frequency=hourly&start=2026-01-14T00&end=2026-02-13T23&length=5000&offset=0&sort%5B0%5D%5Bcolumn%5D=period&sort%5B0%5D%5Bdirection%5D=asc",
+        "last_error": null
+      },
+      {
         "region": "ERCO",
         "fuel_type": "WND",
         "start_date": "2026-01-14",
@@ -328,6 +328,23 @@
           "200": 1
         },
         "last_request_url": "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/?data%5B%5D=value&facets%5Brespondent%5D%5B%5D=ERCO&facets%5Bfueltype%5D%5B%5D=WND&frequency=hourly&start=2026-01-14T00&end=2026-02-13T23&length=5000&offset=0&sort%5B0%5D%5Bcolumn%5D=period&sort%5B0%5D%5Bdirection%5D=asc",
+        "last_error": null
+      },
+      {
+        "region": "CALI",
+        "fuel_type": "SUN",
+        "start_date": "2026-01-14",
+        "end_date": "2026-02-13",
+        "total_records": 363,
+        "pages": 1,
+        "rows_parsed": 363,
+        "empty": false,
+        "request_attempts": 1,
+        "request_failures": 0,
+        "status_counts": {
+          "200": 1
+        },
+        "last_request_url": "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/?data%5B%5D=value&facets%5Brespondent%5D%5B%5D=CISO&facets%5Bfueltype%5D%5B%5D=SUN&frequency=hourly&start=2026-01-14T00&end=2026-02-13T23&length=5000&offset=0&sort%5B0%5D%5Bcolumn%5D=period&sort%5B0%5D%5Bdirection%5D=asc",
         "last_error": null
       },
       {
@@ -362,23 +379,6 @@
           "200": 1
         },
         "last_request_url": "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/?data%5B%5D=value&facets%5Brespondent%5D%5B%5D=MISO&facets%5Bfueltype%5D%5B%5D=SUN&frequency=hourly&start=2026-01-14T00&end=2026-02-13T23&length=5000&offset=0&sort%5B0%5D%5Bcolumn%5D=period&sort%5B0%5D%5Bdirection%5D=asc",
-        "last_error": null
-      },
-      {
-        "region": "CALI",
-        "fuel_type": "SUN",
-        "start_date": "2026-01-14",
-        "end_date": "2026-02-13",
-        "total_records": 363,
-        "pages": 1,
-        "rows_parsed": 363,
-        "empty": false,
-        "request_attempts": 1,
-        "request_failures": 0,
-        "status_counts": {
-          "200": 1
-        },
-        "last_request_url": "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/?data%5B%5D=value&facets%5Brespondent%5D%5B%5D=CISO&facets%5Bfueltype%5D%5B%5D=SUN&frequency=hourly&start=2026-01-14T00&end=2026-02-13T23&length=5000&offset=0&sort%5B0%5D%5Bcolumn%5D=period&sort%5B0%5D%5Bdirection%5D=asc",
         "last_error": null
       }
     ],

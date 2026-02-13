@@ -437,6 +437,21 @@ def run_hourly_pipeline() -> dict:
     if prev_run:
         prev_gen_rows = prev_run.get("pipeline_results", {}).get("generation_rows", 0)
 
+    # If the gap filter intentionally dropped series, adjust the baseline
+    # so the rowdrop gate compares like-for-like (same number of series).
+    dropped_series = results.get("gap_filter", {}).get("series_dropped", [])
+    if dropped_series and prev_gen_rows > 0:
+        total_series = len(_expected_series(regions, fuel_types))
+        active_count = total_series - len(dropped_series)
+        if total_series > 0 and active_count > 0:
+            adjusted_prev = int(prev_gen_rows * active_count / total_series)
+            print(
+                f"[quality_gate] Rowdrop baseline adjusted for "
+                f"{len(dropped_series)} gap-filtered series: "
+                f"{prev_gen_rows} → {adjusted_prev}"
+            )
+            prev_gen_rows = adjusted_prev
+
     curr_gen_rows = results.get("generation_rows", 0)
     rowdrop_ok = True
     if prev_gen_rows > 0:

@@ -354,6 +354,8 @@ def run_hourly_pipeline() -> dict:
             f"{pipeline_start_time.isoformat()} (FORCE_RUN, no freshness check)"
         )
 
+    n_jobs = _env_int("RENEWABLE_N_JOBS", 1)
+
     cfg = RenewablePipelineConfig(
         regions=regions,
         fuel_types=fuel_types,
@@ -362,11 +364,13 @@ def run_hourly_pipeline() -> dict:
         horizon_preset=horizon_preset,  # Apply preset if specified
         cv_windows=cv_windows,
         cv_step_size=cv_step_size,
+        n_jobs=n_jobs,
         data_dir=data_dir,
         overwrite=True,
         start_date=start_date,
         end_date=end_date,
     )
+    print(f"[config] n_jobs={n_jobs} (RENEWABLE_N_JOBS)")
 
     # Add option to skip EDA for fast iteration
     skip_eda = os.getenv("SKIP_EDA", "false").lower() == "true"

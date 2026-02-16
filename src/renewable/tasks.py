@@ -68,6 +68,7 @@ class RenewablePipelineConfig:
     cv_step_size: int = 168  # 1 week
 
     # Model parameters
+    n_jobs: int = 1  # StatsForecast parallelism (default 1 for CI)
     enable_interpretability: bool = True  # LightGBM SHAP analysis (on by default)
 
     # Preprocessing parameters
@@ -478,6 +479,7 @@ def train_renewable_models(
     model = RenewableForecastModel(
         horizon=config.horizon,
         confidence_levels=config.confidence_levels,
+        n_jobs=config.n_jobs,
     )
 
     # Compute adaptive CV settings based on shortest series
@@ -493,7 +495,7 @@ def train_renewable_models(
 
     logger.info(
         f"[train_models] Adaptive CV: {n_windows} windows, "
-        f"step={step_size}h (min_series={min_series_len} rows)"
+        f"step={step_size}h (min_series={min_series_len} rows), n_jobs={config.n_jobs}"
     )
 
     # Cross-validation (modeling_df already has weather merged and time features added)
@@ -689,6 +691,7 @@ def generate_renewable_forecasts(
     model = RenewableForecastModel(
         horizon=config.horizon,
         confidence_levels=config.confidence_levels,
+        n_jobs=config.n_jobs,
     )
 
     # Fit on preprocessed modeling data
@@ -883,14 +886,23 @@ def run_full_pipeline(
     Returns:
         Dictionary with pipeline results
     """
+    import time as _time
+
     logger.info(f"[pipeline] Starting: {config.start_date} to {config.end_date}")
     logger.info(f"[pipeline] Regions: {config.regions}")
     logger.info(f"[pipeline] Fuel types: {config.fuel_types}")
+    logger.info(f"[pipeline] n_jobs: {config.n_jobs}")
+
+    pipeline_t0 = _time.monotonic()
+    step_timings: dict[str, float] = {}
 
     results = {}
 
     # Step 1: Fetch generation
+    _t = _time.monotonic()
     generation_df = fetch_renewable_data(config, fetch_diagnostics=fetch_diagnostics)
+    step_timings["fetch_generation"] = _time.monotonic() - _t
+    logger.info("[pipeline][TIMING] fetch_generation: %.1fs", step_timings["fetch_generation"])
     results["generation_rows"] = len(generation_df)
     results["series_count"] = generation_df["unique_id"].nunique()
 
@@ -1012,13 +1024,17 @@ def run_full_pipeline(
         raise RuntimeError(f"[pipeline][generation_validation] {rep.message} details={rep.details}")
 
     # Step 2: Fetch weather
+    _t = _time.monotonic()
     weather_df = fetch_renewable_weather(config)
+    step_timings["fetch_weather"] = _time.monotonic() - _t
+    logger.info("[pipeline][TIMING] fetch_weather: %.1fs", step_timings["fetch_weather"])
     results["weather_rows"] = len(weather_df)
 
     # Step 3: Run EDA (NEW)
     eda_recommendations = None
 
     if not skip_eda:
+        _t = _time.monotonic()
         logger.info("[pipeline] Running EDA to generate preprocessing recommendations")
         from src.renewable.eda import run_full_eda
 
@@ -1028,6 +1044,9 @@ def run_full_pipeline(
             weather_df,
             eda_output_dir,
         )
+
+        step_timings["eda"] = _time.monotonic() - _t
+        logger.info("[pipeline][TIMING] eda: %.1fs", step_timings["eda"])
 
         results["eda"] = {
             "output_dir": str(eda_output_dir),
@@ -1039,6 +1058,7 @@ def run_full_pipeline(
         logger.warning("[pipeline] Skipping EDA - using default preprocessing policies")
 
     # Step 4: Build datasets per fuel type (MODIFIED)
+    _t = _time.monotonic()
     logger.info("[pipeline] Building modeling datasets (fuel-type specific)")
 
     from src.renewable.dataset_builder import build_dataset_by_fuel_type
@@ -1112,10 +1132,17 @@ def run_full_pipeline(
     else:
         logger.warning("[pipeline] No preprocessing report available - skipping feature extraction")
 
+    step_timings["build_datasets"] = _time.monotonic() - _t
+    logger.info("[pipeline][TIMING] build_datasets: %.1fs", step_timings["build_datasets"])
+
     # Step 5: Train and validate (on preprocessed data)
+    _t = _time.monotonic()
     cv_results, leaderboard, baseline = train_renewable_models(
         config, modeling_df
     )
+    step_timings["train_cv"] = _time.monotonic() - _t
+    logger.info("[pipeline][TIMING] train_cv: %.1fs", step_timings["train_cv"])
+
     best_model = leaderboard.iloc[0]["model"]
     results["best_model"] = best_model
     results["best_rmse"] = float(leaderboard.iloc[0]["rmse"])
@@ -1125,14 +1152,18 @@ def run_full_pipeline(
 
     # Step 6: Generate forecasts (use the best model from CV)
     # Pass weather_df for future weather (forecast horizon)
+    _t = _time.monotonic()
     forecasts = generate_renewable_forecasts(
         config, modeling_df, weather_df, best_model=best_model
     )
+    step_timings["generate_forecasts"] = _time.monotonic() - _t
+    logger.info("[pipeline][TIMING] generate_forecasts: %.1fs", step_timings["generate_forecasts"])
     results["forecast_rows"] = len(forecasts)
 
-    # Step 5: Train LightGBM models and generate interpretability reports (optional)
+    # Step 7: Train LightGBM models and generate interpretability reports (optional)
     # (LightGBM is for interpretability only - MSTL/ARIMA provide primary forecasts)
     if config.enable_interpretability:
+        _t = _time.monotonic()
         logger.info("[pipeline] Training interpretability models (LightGBM + SHAP)")
         try:
             interpretability_reports = train_interpretability_models(
@@ -1151,12 +1182,23 @@ def run_full_pipeline(
         except Exception as e:
             logger.warning(f"[pipeline] Interpretability training failed (non-fatal): {e}")
             results["interpretability"] = {"error": str(e)}
+        step_timings["interpretability"] = _time.monotonic() - _t
+        logger.info("[pipeline][TIMING] interpretability: %.1fs", step_timings["interpretability"])
     else:
         logger.info("[pipeline] Interpretability disabled (enable_interpretability=False)")
         results["interpretability"] = {"enabled": False}
 
     if fetch_diagnostics is not None:
         results["fetch_diagnostics"] = fetch_diagnostics
+
+    # Timing summary
+    total_elapsed = _time.monotonic() - pipeline_t0
+    step_timings["total"] = total_elapsed
+    results["step_timings"] = step_timings
+    logger.info("[pipeline][TIMING] === SUMMARY ===")
+    for step_name, elapsed in step_timings.items():
+        pct = 100 * elapsed / total_elapsed if total_elapsed > 0 else 0
+        logger.info("[pipeline][TIMING]   %s: %.1fs (%.0f%%)", step_name, elapsed, pct)
 
     logger.info(f"[pipeline] Complete. Best model: {results['best_model']}")
 

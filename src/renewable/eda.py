@@ -250,8 +250,22 @@ class NegativeValueInvestigation:
             'preprocessing_policy': 'clamp_to_zero',
         }
 
+        # Log magnitude breakdown for debugging
+        tiny = magnitude.get('tiny_negatives_count', 0)
+        small = magnitude.get('small_negatives_count', 0)
+        medium = magnitude.get('medium_negatives_count', 0)
+        large = magnitude.get('large_negatives_count', 0)
+        print(f"   [DEBUG] Magnitude breakdown: tiny={tiny} small={small} "
+              f"medium={medium} large={large} total={total_neg}")
+
+        hour_ratios = patterns.get('by_hour', {}).get('ratios', {})
+        max_hour_ratio = max(hour_ratios.values()) if hour_ratios else 0
+        peak_hour = patterns.get('by_hour', {}).get('peak_negative_hour')
+        print(f"   [DEBUG] Hourly pattern: peak_hour={peak_hour} "
+              f"max_hour_ratio={max_hour_ratio:.2%}")
+
         # Check if mostly tiny negatives (metering noise)
-        if magnitude.get('tiny_negatives_count', 0) / max(total_neg, 1) > 0.9:
+        if tiny / max(total_neg, 1) > 0.9:
             root_cause_analysis['factors'].append('90%+ negatives are tiny (<10 MWh)')
             root_cause_analysis['root_cause'] = 'METERING_NOISE'
             root_cause_analysis['confidence'] = 'HIGH'
@@ -261,32 +275,58 @@ class NegativeValueInvestigation:
             root_cause_analysis['preprocessing_policy'] = 'clamp_to_zero'
 
         # Check if negatives are systematic (same hours)
-        elif patterns.get('by_hour', {}).get('peak_negative_hour') is not None:
-            hour_ratios = patterns.get('by_hour', {}).get('ratios', {})
-            max_ratio = max(hour_ratios.values()) if hour_ratios else 0
-
-            if max_ratio > 0.3:  # >30% of negatives in one hour
-                root_cause_analysis['factors'].append(f'Negatives concentrated at specific hours')
-                root_cause_analysis['root_cause'] = 'NET_GENERATION_AUXILIARY_LOAD'
-                root_cause_analysis['confidence'] = 'MEDIUM'
-                root_cause_analysis['recommendation'] = (
-                    'Negatives likely represent station auxiliary loads exceeding generation. '
-                    'This is valid net generation data. For forecasting, clamp to 0 since '
-                    'we want to predict usable power output.'
-                )
-                root_cause_analysis['preprocessing_policy'] = 'clamp_to_zero'
+        elif peak_hour is not None and max_hour_ratio > 0.3:
+            root_cause_analysis['factors'].append('Negatives concentrated at specific hours')
+            root_cause_analysis['root_cause'] = 'NET_GENERATION_AUXILIARY_LOAD'
+            root_cause_analysis['confidence'] = 'MEDIUM'
+            root_cause_analysis['recommendation'] = (
+                'Negatives likely represent station auxiliary loads exceeding generation. '
+                'This is valid net generation data. For forecasting, clamp to 0 since '
+                'we want to predict usable power output.'
+            )
+            root_cause_analysis['preprocessing_policy'] = 'clamp_to_zero'
 
         # Check for large sporadic negatives (data errors)
-        if magnitude.get('large_negatives_count', 0) > 0:
-            root_cause_analysis['factors'].append(f"{magnitude.get('large_negatives_count')} large negatives (<-1000 MWh)")
+        if large > 0:
+            root_cause_analysis['factors'].append(f"{large} large negatives (<-1000 MWh)")
 
             # If ONLY large negatives and they're sporadic, likely errors
-            if magnitude.get('tiny_negatives_count', 0) == 0 and magnitude.get('small_negatives_count', 0) == 0:
+            if tiny == 0 and small == 0:
                 root_cause_analysis['root_cause'] = 'DATA_REPORTING_ERROR'
                 root_cause_analysis['confidence'] = 'MEDIUM'
                 root_cause_analysis['recommendation'] = (
                     'Large sporadic negatives are likely data reporting errors. '
                     'Recommend clamping to 0 or investigating with EIA.'
+                )
+
+        # FALLBACK: If no specific pattern matched, classify based on
+        # the overall negative ratio and magnitude mix.
+        # EIA net generation data commonly has mixed-magnitude negatives
+        # from station auxiliary loads across varying conditions.
+        if root_cause_analysis['root_cause'] == 'UNKNOWN':
+            neg_ratio = total_neg / max(len(self.df), 1)
+            root_cause_analysis['factors'].append(
+                f'Mixed magnitude negatives: tiny={tiny} small={small} '
+                f'medium={medium} large={large}'
+            )
+
+            if neg_ratio < 0.15:
+                # Under 15%: likely EIA net generation accounting
+                root_cause_analysis['root_cause'] = 'NET_GENERATION_MIXED'
+                root_cause_analysis['confidence'] = 'MEDIUM'
+                root_cause_analysis['recommendation'] = (
+                    f'Mixed-magnitude negatives ({neg_ratio:.1%} of data) consistent with '
+                    f'EIA net generation accounting (gross - auxiliary). '
+                    f'Safe to clamp to 0 for forecasting.'
+                )
+            else:
+                # Over 15%: unusual, needs investigation but still clamp
+                root_cause_analysis['root_cause'] = 'NET_GENERATION_HIGH_RATIO'
+                root_cause_analysis['confidence'] = 'LOW'
+                root_cause_analysis['recommendation'] = (
+                    f'High negative ratio ({neg_ratio:.1%}) with mixed magnitudes. '
+                    f'Likely EIA net generation but ratio warrants monitoring. '
+                    f'Clamp to 0 for forecasting.'
                 )
 
         return root_cause_analysis

@@ -164,9 +164,11 @@ class RenewableForecastModel:
         self,
         horizon: int = 24,
         confidence_levels: Tuple[int, int] = (80, 95),
+        n_jobs: int = 1,
     ):
         self.horizon = horizon
         self.confidence_levels = confidence_levels
+        self.n_jobs = n_jobs
         self.sf = None
         self._train_df = None
         self._exog_cols: List[str] = []
@@ -248,11 +250,11 @@ class RenewableForecastModel:
         except ImportError:
             pass
 
-        self.sf = StatsForecast(models=models, freq='h', n_jobs=-1)
+        self.sf = StatsForecast(models=models, freq='h', n_jobs=self.n_jobs)
         self._train_df = train_df
         self.fitted = True
 
-        logger.info(f"[FIT] Fitted {len(models)} models on {len(train_df):,} rows")
+        logger.info(f"[FIT] Fitted {len(models)} models on {len(train_df):,} rows (n_jobs={self.n_jobs})")
 
     def cross_validate(
         self,
@@ -285,10 +287,11 @@ class RenewableForecastModel:
         except ImportError:
             pass
 
-        sf = StatsForecast(models=models, freq='h', n_jobs=-1)
+        sf = StatsForecast(models=models, freq='h', n_jobs=self.n_jobs)
 
         logger.info(
-            f"[CV] Running: {n_windows} windows, step={step_size}h, horizon={self.horizon}h"
+            f"[CV] Running: {n_windows} windows, step={step_size}h, "
+            f"horizon={self.horizon}h, n_jobs={self.n_jobs}"
         )
 
         cv = sf.cross_validation(

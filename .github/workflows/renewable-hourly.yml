@@ -35,12 +35,14 @@ jobs:
       MAX_MISSING_RATIO: "0.02"
       RENEWABLE_DATA_DIR: "data/renewable"
       RENEWABLE_N_JOBS: "1"
-      # LightGBM lag count for interpretability (168=7d accurate, 48=2d CI-safe)
-      # 168 lags × 6 series + SHAP was the primary timeout cause; 48 is sufficient
-      # for identifying dominant drivers while keeping CI well under 25min budget.
+      # Interpretability is optional and expensive; keep hourly CI focused on
+      # data freshness, validation, and forecast generation.
+      RENEWABLE_ENABLE_INTERPRETABILITY: "false"
       RENEWABLE_INTERPRETABILITY_LAGS: "48"
       # EDA generates matplotlib plots per-series; skip in CI if not needed.
       SKIP_EDA: "false"
+      # Emit long-step heartbeat logs so stalls/time budget issues are visible.
+      PIPELINE_HEARTBEAT_SECONDS: "60"
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"

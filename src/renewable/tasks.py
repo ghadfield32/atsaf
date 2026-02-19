@@ -12,10 +12,13 @@ Idempotent tasks for:
 import argparse
 import logging
 import os
+import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -889,6 +892,39 @@ def compute_renewable_drift(
     return result
 
 
+def _run_with_step_heartbeat(
+    *,
+    step_name: str,
+    fn: Callable[[], Any],
+    heartbeat_seconds: int,
+) -> Any:
+    """Run a callable and emit periodic heartbeat logs while it is running."""
+    if heartbeat_seconds <= 0:
+        return fn()
+
+    started_at = time.monotonic()
+    stop_event = threading.Event()
+
+    def _heartbeat_loop() -> None:
+        while not stop_event.wait(heartbeat_seconds):
+            elapsed = time.monotonic() - started_at
+            now_utc = datetime.now(timezone.utc).isoformat()
+            msg = (
+                f"[pipeline][HEARTBEAT] step={step_name} "
+                f"elapsed={elapsed:.1f}s at={now_utc}"
+            )
+            logger.info(msg)
+            print(msg, flush=True)
+
+    thread = threading.Thread(target=_heartbeat_loop, daemon=True)
+    thread.start()
+    try:
+        return fn()
+    finally:
+        stop_event.set()
+        thread.join(timeout=0.2)
+
+
 def run_full_pipeline(
     config: RenewablePipelineConfig,
     fetch_diagnostics: Optional[list[dict]] = None,
@@ -897,6 +933,7 @@ def run_full_pipeline(
     max_lag_hours: int = 48,
     max_missing_ratio: float = 0.02,
     validation_debug: bool = False,
+    heartbeat_seconds: int = 60,
 ) -> dict:
     """Run the complete renewable forecasting pipeline.
 
@@ -912,6 +949,7 @@ def run_full_pipeline(
         config: Pipeline configuration
         fetch_diagnostics: Optional list to capture per-region fetch metadata
         validation_debug: If True, emit stepwise validation snapshots for debugging
+        heartbeat_seconds: Progress heartbeat interval for long steps (0 disables)
 
     Returns:
         Dictionary with pipeline results
@@ -922,6 +960,13 @@ def run_full_pipeline(
     logger.info(f"[pipeline] Regions: {config.regions}")
     logger.info(f"[pipeline] Fuel types: {config.fuel_types}")
     logger.info(f"[pipeline] n_jobs: {config.n_jobs}")
+    if heartbeat_seconds < 0:
+        logger.warning(
+            "[pipeline] heartbeat_seconds=%s is invalid; using 0",
+            heartbeat_seconds,
+        )
+        heartbeat_seconds = 0
+    print(f"[pipeline][CONFIG] heartbeat_seconds={heartbeat_seconds}s", flush=True)
 
     pipeline_t0 = _time.monotonic()
     step_timings: dict[str, float] = {}
@@ -929,12 +974,20 @@ def run_full_pipeline(
     results = {}
 
     # Step 1: Fetch generation
-    print("[pipeline][TIMING] Step 1: fetch_generation starting...")
+    print("[pipeline][TIMING] Step 1: fetch_generation starting...", flush=True)
     _t = _time.monotonic()
-    generation_df = fetch_renewable_data(config, fetch_diagnostics=fetch_diagnostics)
+    generation_df = _run_with_step_heartbeat(
+        step_name="fetch_generation",
+        fn=lambda: fetch_renewable_data(config, fetch_diagnostics=fetch_diagnostics),
+        heartbeat_seconds=heartbeat_seconds,
+    )
     step_timings["fetch_generation"] = _time.monotonic() - _t
     logger.info("[pipeline][TIMING] fetch_generation: %.1fs", step_timings["fetch_generation"])
-    print(f"[pipeline][TIMING] Step 1: fetch_generation done in {step_timings['fetch_generation']:.1f}s")
+    print(
+        f"[pipeline][TIMING] Step 1: fetch_generation done "
+        f"in {step_timings['fetch_generation']:.1f}s",
+        flush=True,
+    )
     results["generation_rows"] = len(generation_df)
     results["series_count"] = generation_df["unique_id"].nunique()
 
@@ -1056,9 +1109,13 @@ def run_full_pipeline(
         raise RuntimeError(f"[pipeline][generation_validation] {rep.message} details={rep.details}")
 
     # Step 2: Fetch weather
-    print("[pipeline][TIMING] Step 2: fetch_weather starting...")
+    print("[pipeline][TIMING] Step 2: fetch_weather starting...", flush=True)
     _t = _time.monotonic()
-    weather_df = fetch_renewable_weather(config)
+    weather_df = _run_with_step_heartbeat(
+        step_name="fetch_weather",
+        fn=lambda: fetch_renewable_weather(config),
+        heartbeat_seconds=heartbeat_seconds,
+    )
     step_timings["fetch_weather"] = _time.monotonic() - _t
     logger.info(
         "[pipeline][TIMING] fetch_weather: %.1fs",
@@ -1066,7 +1123,8 @@ def run_full_pipeline(
     )
     print(
         f"[pipeline][TIMING] Step 2: fetch_weather done"
-        f" in {step_timings['fetch_weather']:.1f}s"
+        f" in {step_timings['fetch_weather']:.1f}s",
+        flush=True,
     )
     results["weather_rows"] = len(weather_df)
 
@@ -1074,23 +1132,28 @@ def run_full_pipeline(
     eda_recommendations = None
 
     if not skip_eda:
-        print("[pipeline][TIMING] Step 3: eda starting...")
+        print("[pipeline][TIMING] Step 3: eda starting...", flush=True)
         _t = _time.monotonic()
         logger.info("[pipeline] Running EDA to generate preprocessing recommendations")
         from src.renewable.eda import run_full_eda
 
         eda_output_dir = Path(config.data_dir) / "eda"
-        eda_recommendations = run_full_eda(
-            generation_df,
-            weather_df,
-            eda_output_dir,
+        eda_recommendations = _run_with_step_heartbeat(
+            step_name="eda",
+            fn=lambda: run_full_eda(
+                generation_df,
+                weather_df,
+                eda_output_dir,
+            ),
+            heartbeat_seconds=heartbeat_seconds,
         )
 
         step_timings["eda"] = _time.monotonic() - _t
         logger.info("[pipeline][TIMING] eda: %.1fs", step_timings["eda"])
         print(
             f"[pipeline][TIMING] Step 3: eda done"
-            f" in {step_timings['eda']:.1f}s"
+            f" in {step_timings['eda']:.1f}s",
+            flush=True,
         )
 
         results["eda"] = {
@@ -1103,7 +1166,7 @@ def run_full_pipeline(
         logger.warning("[pipeline] Skipping EDA - using default preprocessing policies")
 
     # Step 4: Build datasets per fuel type (MODIFIED)
-    print("[pipeline][TIMING] Step 4: build_datasets starting...")
+    print("[pipeline][TIMING] Step 4: build_datasets starting...", flush=True)
     _t = _time.monotonic()
     logger.info("[pipeline] Building modeling datasets (fuel-type specific)")
 
@@ -1185,20 +1248,24 @@ def run_full_pipeline(
     )
     print(
         f"[pipeline][TIMING] Step 4: build_datasets done"
-        f" in {step_timings['build_datasets']:.1f}s"
+        f" in {step_timings['build_datasets']:.1f}s",
+        flush=True,
     )
 
     # Step 5: Train and validate (on preprocessed data)
-    print("[pipeline][TIMING] Step 5: train_cv starting...")
+    print("[pipeline][TIMING] Step 5: train_cv starting...", flush=True)
     _t = _time.monotonic()
-    cv_results, leaderboard, baseline = train_renewable_models(
-        config, modeling_df
+    cv_results, leaderboard, baseline = _run_with_step_heartbeat(
+        step_name="train_cv",
+        fn=lambda: train_renewable_models(config, modeling_df),
+        heartbeat_seconds=heartbeat_seconds,
     )
     step_timings["train_cv"] = _time.monotonic() - _t
     logger.info("[pipeline][TIMING] train_cv: %.1fs", step_timings["train_cv"])
     print(
         f"[pipeline][TIMING] Step 5: train_cv done"
-        f" in {step_timings['train_cv']:.1f}s"
+        f" in {step_timings['train_cv']:.1f}s",
+        flush=True,
     )
 
     best_model = leaderboard.iloc[0]["model"]
@@ -1210,10 +1277,14 @@ def run_full_pipeline(
 
     # Step 6: Generate forecasts (use the best model from CV)
     # Pass weather_df for future weather (forecast horizon)
-    print("[pipeline][TIMING] Step 6: generate_forecasts starting...")
+    print("[pipeline][TIMING] Step 6: generate_forecasts starting...", flush=True)
     _t = _time.monotonic()
-    forecasts = generate_renewable_forecasts(
-        config, modeling_df, weather_df, best_model=best_model
+    forecasts = _run_with_step_heartbeat(
+        step_name="generate_forecasts",
+        fn=lambda: generate_renewable_forecasts(
+            config, modeling_df, weather_df, best_model=best_model
+        ),
+        heartbeat_seconds=heartbeat_seconds,
     )
     step_timings["generate_forecasts"] = _time.monotonic() - _t
     logger.info(
@@ -1222,19 +1293,24 @@ def run_full_pipeline(
     )
     print(
         f"[pipeline][TIMING] Step 6: generate_forecasts done"
-        f" in {step_timings['generate_forecasts']:.1f}s"
+        f" in {step_timings['generate_forecasts']:.1f}s",
+        flush=True,
     )
     results["forecast_rows"] = len(forecasts)
 
     # Step 7: Train LightGBM models and generate interpretability reports (optional)
     # (LightGBM is for interpretability only - MSTL/ARIMA provide primary forecasts)
     if config.enable_interpretability:
-        print("[pipeline][TIMING] Step 7: interpretability starting...")
+        print("[pipeline][TIMING] Step 7: interpretability starting...", flush=True)
         _t = _time.monotonic()
         logger.info("[pipeline] Training interpretability models (LightGBM + SHAP)")
         try:
-            interpretability_reports = train_interpretability_models(
-                config, generation_df, weather_df
+            interpretability_reports = _run_with_step_heartbeat(
+                step_name="interpretability",
+                fn=lambda: train_interpretability_models(
+                    config, generation_df, weather_df
+                ),
+                heartbeat_seconds=heartbeat_seconds,
             )
             results["interpretability"] = {
                 "series_count": len(interpretability_reports),
@@ -1256,7 +1332,8 @@ def run_full_pipeline(
         )
         print(
             f"[pipeline][TIMING] Step 7: interpretability done"
-            f" in {step_timings['interpretability']:.1f}s"
+            f" in {step_timings['interpretability']:.1f}s",
+            flush=True,
         )
     else:
         logger.info("[pipeline] Interpretability disabled (enable_interpretability=False)")
@@ -1270,14 +1347,14 @@ def run_full_pipeline(
     step_timings["total"] = total_elapsed
     results["step_timings"] = step_timings
     logger.info("[pipeline][TIMING] === SUMMARY ===")
-    print("[pipeline][TIMING] === STEP SUMMARY ===")
+    print("[pipeline][TIMING] === STEP SUMMARY ===", flush=True)
     for step_name, elapsed in step_timings.items():
         pct = 100 * elapsed / total_elapsed if total_elapsed > 0 else 0
         logger.info(
             "[pipeline][TIMING]   %s: %.1fs (%.0f%%)",
             step_name, elapsed, pct,
         )
-        print(f"[pipeline][TIMING]   {step_name}: {elapsed:.1f}s ({pct:.0f}%)")
+        print(f"[pipeline][TIMING]   {step_name}: {elapsed:.1f}s ({pct:.0f}%)", flush=True)
 
     logger.info(f"[pipeline] Complete. Best model: {results['best_model']}")
 

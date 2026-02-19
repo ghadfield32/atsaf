@@ -355,6 +355,13 @@ def run_hourly_pipeline() -> dict:
         )
 
     n_jobs = _env_int("RENEWABLE_N_JOBS", 1)
+    enable_interpretability = _env_bool("RENEWABLE_ENABLE_INTERPRETABILITY", True)
+    heartbeat_seconds = _env_int("PIPELINE_HEARTBEAT_SECONDS", 60)
+    if heartbeat_seconds < 0:
+        print(
+            f"[config] Invalid PIPELINE_HEARTBEAT_SECONDS={heartbeat_seconds}; using 0"
+        )
+        heartbeat_seconds = 0
 
     cfg = RenewablePipelineConfig(
         regions=regions,
@@ -365,12 +372,22 @@ def run_hourly_pipeline() -> dict:
         cv_windows=cv_windows,
         cv_step_size=cv_step_size,
         n_jobs=n_jobs,
+        enable_interpretability=enable_interpretability,
         data_dir=data_dir,
         overwrite=True,
         start_date=start_date,
         end_date=end_date,
     )
     print(f"[config] n_jobs={n_jobs} (RENEWABLE_N_JOBS)")
+    print(
+        "[config] "
+        f"enable_interpretability={enable_interpretability} "
+        "(RENEWABLE_ENABLE_INTERPRETABILITY)"
+    )
+    print(
+        f"[config] heartbeat_seconds={heartbeat_seconds} "
+        "(PIPELINE_HEARTBEAT_SECONDS)"
+    )
 
     # Add option to skip EDA for fast iteration
     skip_eda = os.getenv("SKIP_EDA", "false").lower() == "true"
@@ -383,6 +400,7 @@ def run_hourly_pipeline() -> dict:
         max_lag_hours=max_lag_hours,
         max_missing_ratio=max_missing_ratio,
         validation_debug=validation_debug,
+        heartbeat_seconds=heartbeat_seconds,
     )
 
     # Validation timing
@@ -495,6 +513,9 @@ def run_hourly_pipeline() -> dict:
             "data_dir": data_dir,
             "start_date": cfg.start_date,
             "end_date": cfg.end_date,
+            "skip_eda": skip_eda,
+            "enable_interpretability": enable_interpretability,
+            "heartbeat_seconds": heartbeat_seconds,
         },
         "pipeline_results": results,
         "validation": {

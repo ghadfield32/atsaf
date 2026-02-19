@@ -16,6 +16,10 @@ One-to-two liners per entry. Organised by section/topic.
 | 2026-02-17 | DONE | **Fix**: Made `lags` configurable via `RENEWABLE_INTERPRETABILITY_LAGS` env var (default `48`); set `48` in workflow. Reduces lag-feature matrix from 168→48 columns (71% smaller). |
 | 2026-02-17 | DONE | **Observability**: `step_timings` existed in code but used `logger.info()` — invisible in Actions (only WARNING+ surfaces). Added `print()` alongside every step start/end + per-series timing in interpretability loop. |
 | 2026-02-17 | DONE | Added `SKIP_EDA: "false"` to workflow so EDA can be toggled without code changes. |
+| 2026-02-19 | DONE | Reconfirmed latest failure pattern: negative-value lines are warnings; job is still timing out (`run_hourly` ~23m+ plus setup exceeds 25m limit). |
+| 2026-02-19 | DONE | Added step heartbeat instrumentation in `run_full_pipeline()` (`[pipeline][HEARTBEAT]`) to emit progress every N seconds during long steps (`fetch`, `eda`, `train_cv`, `forecast`, `interpretability`). |
+| 2026-02-19 | DONE | Added runtime controls in `run_hourly`: `RENEWABLE_ENABLE_INTERPRETABILITY` and `PIPELINE_HEARTBEAT_SECONDS`; surfaced both in `run_log.json` config for traceability. |
+| 2026-02-19 | DONE | Hourly workflow now sets `RENEWABLE_ENABLE_INTERPRETABILITY=false` and `PIPELINE_HEARTBEAT_SECONDS=60` so CI prioritizes forecast pipeline within time budget while keeping live progress logs. |
 
 ### Negative Values (CALI_SUN)
 
@@ -53,6 +57,7 @@ One-to-two liners per entry. Organised by section/topic.
 |------|--------|-------|
 | 2026-02-16 | OK | Best model: AutoTheta (RMSE 3745). CV uses 2 windows, step=168h. 5 models × 6 series fit within ~5-8 min typically. |
 | PENDING | - | If CV becomes a bottleneck, consider reducing model set or setting `RENEWABLE_CV_WINDOWS: "1"` temporarily. |
+| 2026-02-19 | WATCH | Local profiling showed `train_cv` can run for many minutes with high CPU and sparse logs; heartbeat now makes this visible during CI execution. |
 
 ---
 
@@ -62,3 +67,4 @@ One-to-two liners per entry. Organised by section/topic.
 - [ ] If interpretability at 48 lags still slow: tune `shap_max_samples` or `n_estimators`.
 - [ ] Consider `SKIP_EDA: "true"` in workflow (EDA adds plot generation overhead; recommendations are stable).
 - [ ] Investigate whether `concurrency: cancel-in-progress: true` could cancel a valid long run if a manual dispatch overlaps.
+- [ ] After next successful run, verify `run_log.json` includes `config.enable_interpretability` and `config.heartbeat_seconds` for auditability.

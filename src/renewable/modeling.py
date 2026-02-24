@@ -24,8 +24,9 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -173,6 +174,7 @@ class RenewableForecastModel:
         self._train_df = None
         self._exog_cols: List[str] = []
         self.fitted = False
+        self.last_cv_diagnostics: Dict[str, Any] = {}
 
     def _prepare_training_df(
         self,
@@ -230,37 +232,90 @@ class RenewableForecastModel:
             df: Preprocessed DataFrame from dataset_builder
         """
         from statsforecast import StatsForecast
-        from statsforecast.models import (MSTL, AutoARIMA, AutoETS,
-                                          SeasonalNaive)
 
         train_df = self._prepare_training_df(df)
-
-        models = [
-            MSTL(season_length=[24, 168], trend_forecaster=AutoARIMA(), alias="MSTL_ARIMA"),
-            AutoARIMA(season_length=24),
-            AutoETS(season_length=24),
-            SeasonalNaive(season_length=24),
-        ]
-
-        # Try to add expanded models
-        try:
-            from statsforecast.models import AutoTheta
-            models.append(AutoTheta(season_length=24))
-            logger.info("[FIT] Using expanded model set: +AutoTheta")
-        except ImportError:
-            pass
+        model_specs = self._build_model_specs()
+        models = [model for _, model in model_specs]
 
         self.sf = StatsForecast(models=models, freq='h', n_jobs=self.n_jobs)
         self._train_df = train_df
         self.fitted = True
 
-        logger.info(f"[FIT] Fitted {len(models)} models on {len(train_df):,} rows (n_jobs={self.n_jobs})")
+        logger.info(
+            "[FIT] Fitted %d models (%s) on %d rows (n_jobs=%d)",
+            len(models),
+            [name for name, _ in model_specs],
+            len(train_df),
+            self.n_jobs,
+        )
+
+    def _build_model_specs(self) -> List[Tuple[str, Any]]:
+        """Build the default model set used for training/CV."""
+        from statsforecast.models import (MSTL, AutoARIMA, AutoETS,
+                                          SeasonalNaive)
+
+        model_specs: List[Tuple[str, Any]] = [
+            (
+                "MSTL_ARIMA",
+                MSTL(
+                    season_length=[24, 168],
+                    trend_forecaster=AutoARIMA(),
+                    alias="MSTL_ARIMA",
+                ),
+            ),
+            ("AutoARIMA", AutoARIMA(season_length=24)),
+            ("AutoETS", AutoETS(season_length=24)),
+            ("SeasonalNaive", SeasonalNaive(season_length=24)),
+        ]
+
+        try:
+            from statsforecast.models import AutoTheta
+
+            model_specs.append(("AutoTheta", AutoTheta(season_length=24)))
+        except ImportError:
+            logger.info("[models] AutoTheta unavailable; continuing without it")
+
+        return model_specs
+
+    def _select_model_specs(
+        self,
+        model_specs: Sequence[Tuple[str, Any]],
+        model_allowlist: Optional[List[str]],
+    ) -> List[Tuple[str, Any]]:
+        """Filter model specs by alias; fail loudly for unknown aliases."""
+        if not model_allowlist:
+            return list(model_specs)
+
+        requested = [name.strip() for name in model_allowlist if name.strip()]
+        if not requested:
+            return list(model_specs)
+
+        requested_map = {name.lower(): name for name in requested}
+        selected = [
+            (name, model)
+            for name, model in model_specs
+            if name.lower() in requested_map
+        ]
+
+        selected_names = {name.lower() for name, _ in selected}
+        missing = [requested_map[key] for key in requested_map if key not in selected_names]
+        if missing:
+            available = [name for name, _ in model_specs]
+            raise ValueError(
+                f"Unknown model aliases in RENEWABLE_CV_MODEL_ALLOWLIST: {missing}. "
+                f"Available models: {available}"
+            )
+
+        return selected
 
     def cross_validate(
         self,
         df: pd.DataFrame,
         n_windows: int = 3,
         step_size: int = 168,
+        *,
+        profile_models: bool = False,
+        model_allowlist: Optional[List[str]] = None,
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Perform cross-validation.
@@ -269,38 +324,120 @@ class RenewableForecastModel:
             (cv_results, leaderboard)
         """
         from statsforecast import StatsForecast
-        from statsforecast.models import (MSTL, AutoARIMA, AutoETS,
-                                          SeasonalNaive)
 
         train_df = self._prepare_training_df(df)
+        model_specs = self._select_model_specs(
+            self._build_model_specs(),
+            model_allowlist=model_allowlist,
+        )
+        model_names = [name for name, _ in model_specs]
 
-        models = [
-            MSTL(season_length=[24, 168], trend_forecaster=AutoARIMA(), alias="MSTL_ARIMA"),
-            AutoARIMA(season_length=24),
-            AutoETS(season_length=24),
-            SeasonalNaive(season_length=24),
-        ]
+        series_lengths = train_df.groupby("unique_id").size()
+        diagnostics: Dict[str, Any] = {
+            "status": "running",
+            "mode": "per_model" if profile_models else "batch",
+            "n_windows": int(n_windows),
+            "step_size_hours": int(step_size),
+            "horizon_hours": int(self.horizon),
+            "n_jobs": int(self.n_jobs),
+            "train_rows": int(len(train_df)),
+            "series_count": int(train_df["unique_id"].nunique()),
+            "series_length_min": int(series_lengths.min()),
+            "series_length_max": int(series_lengths.max()),
+            "models": model_names,
+            "model_count": int(len(model_names)),
+            "per_model_seconds": {},
+        }
+        self.last_cv_diagnostics = diagnostics
 
-        try:
-            from statsforecast.models import AutoTheta
-            models.append(AutoTheta(season_length=24))
-        except ImportError:
-            pass
-
-        sf = StatsForecast(models=models, freq='h', n_jobs=self.n_jobs)
+        total_started = time.monotonic()
+        current_model: Optional[str] = None
 
         logger.info(
-            f"[CV] Running: {n_windows} windows, step={step_size}h, "
-            f"horizon={self.horizon}h, n_jobs={self.n_jobs}"
+            "[CV] Running: %d windows, step=%dh, horizon=%dh, n_jobs=%d, "
+            "mode=%s, models=%s",
+            n_windows,
+            step_size,
+            self.horizon,
+            self.n_jobs,
+            diagnostics["mode"],
+            model_names,
         )
 
-        cv = sf.cross_validation(
-            df=train_df,
-            h=self.horizon,
-            step_size=step_size,
-            n_windows=n_windows,
-            level=list(self.confidence_levels),
-        ).reset_index()
+        try:
+            if profile_models:
+                cv_parts: List[pd.DataFrame] = []
+                merge_keys = ["unique_id", "ds", "cutoff", "y"]
+
+                for model_name, model_obj in model_specs:
+                    current_model = model_name
+                    model_started = time.monotonic()
+                    logger.info("[CV][MODEL] %s starting", model_name)
+
+                    sf = StatsForecast(models=[model_obj], freq='h', n_jobs=self.n_jobs)
+                    model_cv = sf.cross_validation(
+                        df=train_df,
+                        h=self.horizon,
+                        step_size=step_size,
+                        n_windows=n_windows,
+                        level=list(self.confidence_levels),
+                    ).reset_index(drop=True)
+
+                    model_elapsed = time.monotonic() - model_started
+                    diagnostics["per_model_seconds"][model_name] = round(model_elapsed, 3)
+                    logger.info(
+                        "[CV][MODEL] %s done in %.1fs (rows=%d)",
+                        model_name,
+                        model_elapsed,
+                        len(model_cv),
+                    )
+                    cv_parts.append(model_cv)
+
+                cv = cv_parts[0]
+                for part in cv_parts[1:]:
+                    extra_cols = [c for c in part.columns if c not in merge_keys]
+                    expected_rows = len(cv)
+                    cv = cv.merge(
+                        part[merge_keys + extra_cols],
+                        on=merge_keys,
+                        how="inner",
+                        validate="one_to_one",
+                    )
+                    if len(cv) != expected_rows:
+                        raise RuntimeError(
+                            "Per-model CV merge changed row count: "
+                            f"{expected_rows} -> {len(cv)}"
+                        )
+            else:
+                sf = StatsForecast(
+                    models=[model for _, model in model_specs],
+                    freq='h',
+                    n_jobs=self.n_jobs,
+                )
+                cv = sf.cross_validation(
+                    df=train_df,
+                    h=self.horizon,
+                    step_size=step_size,
+                    n_windows=n_windows,
+                    level=list(self.confidence_levels),
+                ).reset_index(drop=True)
+        except Exception:
+            diagnostics["status"] = "failed"
+            diagnostics["failed_model"] = current_model
+            diagnostics["total_seconds"] = round(time.monotonic() - total_started, 3)
+            self.last_cv_diagnostics = diagnostics
+            raise
+
+        diagnostics["status"] = "ok"
+        diagnostics["cv_rows"] = int(len(cv))
+        diagnostics["total_seconds"] = round(time.monotonic() - total_started, 3)
+        self.last_cv_diagnostics = diagnostics
+        logger.info(
+            "[CV][TIMING] total=%.1fs rows=%d mode=%s",
+            diagnostics["total_seconds"],
+            len(cv),
+            diagnostics["mode"],
+        )
 
         # CRITICAL: Apply physical constraints to CV results
         cv = enforce_physical_constraints(cv, min_value=0.0)
@@ -313,7 +450,7 @@ class RenewableForecastModel:
     def _build_leaderboard(self, cv_df: pd.DataFrame) -> pd.DataFrame:
         """Build model comparison leaderboard from CV results."""
         # Find model columns (not id/ds/cutoff/y, not interval columns)
-        exclude = {'unique_id', 'ds', 'cutoff', 'y'}
+        exclude = {'unique_id', 'ds', 'cutoff', 'y', 'index'}
         interval_pattern = re.compile(r'-(lo|hi)-\d+$')
 
         model_cols = [

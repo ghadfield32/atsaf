@@ -453,7 +453,12 @@ def fetch_renewable_weather(
 def train_renewable_models(
     config: RenewablePipelineConfig,
     modeling_df: Optional[pd.DataFrame] = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    *,
+    return_diagnostics: bool = False,
+) -> (
+    tuple[pd.DataFrame, pd.DataFrame, dict]
+    | tuple[pd.DataFrame, pd.DataFrame, dict, dict[str, Any]]
+):
     """Task 3: Train models and compute baseline metrics via cross-validation.
 
     Args:
@@ -463,6 +468,7 @@ def train_renewable_models(
 
     Returns:
         Tuple of (cv_results, leaderboard, baseline_metrics)
+        If return_diagnostics=True, returns an additional cv_diagnostics dict
     """
     # Load and preprocess data if not provided
     if modeling_df is None:
@@ -483,6 +489,30 @@ def train_renewable_models(
         horizon=config.horizon,
         confidence_levels=config.confidence_levels,
         n_jobs=config.n_jobs,
+    )
+
+    def _env_bool(name: str, default: bool) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        raw = raw.strip().lower()
+        if raw in {"1", "true", "yes", "y", "on"}:
+            return True
+        if raw in {"0", "false", "no", "n", "off"}:
+            return False
+        logger.warning("[train_models] Invalid %s=%r; using %s", name, raw, default)
+        return default
+
+    cv_profile_models = _env_bool("RENEWABLE_CV_PROFILE_MODELS", False)
+    cv_model_allowlist_raw = os.getenv("RENEWABLE_CV_MODEL_ALLOWLIST", "")
+    cv_model_allowlist = [
+        item.strip() for item in cv_model_allowlist_raw.split(",") if item.strip()
+    ]
+    if cv_model_allowlist:
+        logger.info("[train_models] CV model allowlist: %s", cv_model_allowlist)
+    logger.info(
+        "[train_models] CV profile mode: %s (RENEWABLE_CV_PROFILE_MODELS)",
+        cv_profile_models,
     )
 
     # Compute adaptive CV settings based on shortest series
@@ -506,12 +536,37 @@ def train_renewable_models(
         df=modeling_df,
         n_windows=n_windows,
         step_size=step_size,
+        profile_models=cv_profile_models,
+        model_allowlist=cv_model_allowlist or None,
     )
+    cv_diagnostics = dict(getattr(model, "last_cv_diagnostics", {}))
+    if cv_diagnostics:
+        print(
+            "[train_models][CV][SUMMARY] "
+            f"mode={cv_diagnostics.get('mode')} "
+            f"models={cv_diagnostics.get('models')} "
+            f"total={cv_diagnostics.get('total_seconds')}s "
+            f"rows={cv_diagnostics.get('cv_rows')}",
+            flush=True,
+        )
+        per_model_seconds = cv_diagnostics.get("per_model_seconds", {})
+        for model_name, elapsed in sorted(
+            per_model_seconds.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        ):
+            print(
+                f"[train_models][CV][MODEL] {model_name} elapsed={elapsed}s",
+                flush=True,
+            )
 
     best_model = leaderboard.iloc[0]["model"]
     baseline = compute_baseline_metrics(cv_results, model_name=best_model)
 
     logger.info(f"[train_models] Best model: {best_model}, RMSE: {baseline['rmse_mean']:.1f}")
+
+    if return_diagnostics:
+        return cv_results, leaderboard, baseline, cv_diagnostics
 
     return cv_results, leaderboard, baseline
 
@@ -538,6 +593,8 @@ def train_interpretability_models(
     Returns:
         Dict mapping series_id -> InterpretabilityReport
     """
+    import time as _time
+
     # Read lag count from env var: 168 (7d) is accurate but slow for CI.
     # RENEWABLE_INTERPRETABILITY_LAGS=48 covers 2 days and fits in budget.
     interp_lags = int(os.getenv("RENEWABLE_INTERPRETABILITY_LAGS", "48"))
@@ -1255,9 +1312,13 @@ def run_full_pipeline(
     # Step 5: Train and validate (on preprocessed data)
     print("[pipeline][TIMING] Step 5: train_cv starting...", flush=True)
     _t = _time.monotonic()
-    cv_results, leaderboard, baseline = _run_with_step_heartbeat(
+    cv_results, leaderboard, baseline, cv_diagnostics = _run_with_step_heartbeat(
         step_name="train_cv",
-        fn=lambda: train_renewable_models(config, modeling_df),
+        fn=lambda: train_renewable_models(
+            config,
+            modeling_df,
+            return_diagnostics=True,
+        ),
         heartbeat_seconds=heartbeat_seconds,
     )
     step_timings["train_cv"] = _time.monotonic() - _t
@@ -1272,6 +1333,7 @@ def run_full_pipeline(
     results["best_model"] = best_model
     results["best_rmse"] = float(leaderboard.iloc[0]["rmse"])
     results["baseline"] = baseline
+    results["train_cv_diagnostics"] = cv_diagnostics
     # Save full leaderboard for dashboard display
     results["leaderboard"] = leaderboard.to_dict(orient="records")
 

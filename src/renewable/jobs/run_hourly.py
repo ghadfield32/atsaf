@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 from src.renewable.tasks import RenewablePipelineConfig, run_full_pipeline
 from src.renewable.validation import validate_generation_df
-from src.renewable.data_freshness import check_all_series_freshness, FreshnessCheckResult
+from src.renewable.data_freshness import check_all_series_freshness
 
 load_dotenv()
 
@@ -357,6 +357,8 @@ def run_hourly_pipeline() -> dict:
     n_jobs = _env_int("RENEWABLE_N_JOBS", 1)
     enable_interpretability = _env_bool("RENEWABLE_ENABLE_INTERPRETABILITY", True)
     heartbeat_seconds = _env_int("PIPELINE_HEARTBEAT_SECONDS", 60)
+    cv_profile_models = _env_bool("RENEWABLE_CV_PROFILE_MODELS", False)
+    cv_model_allowlist = _env_list("RENEWABLE_CV_MODEL_ALLOWLIST", "")
     if heartbeat_seconds < 0:
         print(
             f"[config] Invalid PIPELINE_HEARTBEAT_SECONDS={heartbeat_seconds}; using 0"
@@ -388,6 +390,15 @@ def run_hourly_pipeline() -> dict:
         f"[config] heartbeat_seconds={heartbeat_seconds} "
         "(PIPELINE_HEARTBEAT_SECONDS)"
     )
+    print(
+        f"[config] cv_profile_models={cv_profile_models} "
+        "(RENEWABLE_CV_PROFILE_MODELS)"
+    )
+    if cv_model_allowlist:
+        print(
+            f"[config] cv_model_allowlist={cv_model_allowlist} "
+            "(RENEWABLE_CV_MODEL_ALLOWLIST)"
+        )
 
     # Add option to skip EDA for fast iteration
     skip_eda = os.getenv("SKIP_EDA", "false").lower() == "true"
@@ -516,6 +527,8 @@ def run_hourly_pipeline() -> dict:
             "skip_eda": skip_eda,
             "enable_interpretability": enable_interpretability,
             "heartbeat_seconds": heartbeat_seconds,
+            "cv_profile_models": cv_profile_models,
+            "cv_model_allowlist": cv_model_allowlist,
         },
         "pipeline_results": results,
         "validation": {

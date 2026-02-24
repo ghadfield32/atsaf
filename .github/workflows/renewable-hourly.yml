@@ -21,7 +21,8 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Keep under 60m hourly cadence but avoid killing train_cv prematurely.
+    timeout-minutes: 55
     env:
       EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
       FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.force_run && 'true' || 'false' }}
@@ -43,6 +44,8 @@ jobs:
       SKIP_EDA: "false"
       # Emit long-step heartbeat logs so stalls/time budget issues are visible.
       PIPELINE_HEARTBEAT_SECONDS: "60"
+      # Emit per-model CV timings to identify exactly where train_cv spends time.
+      RENEWABLE_CV_PROFILE_MODELS: "true"
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"

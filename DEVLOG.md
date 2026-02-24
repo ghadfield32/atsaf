@@ -20,6 +20,9 @@ One-to-two liners per entry. Organised by section/topic.
 | 2026-02-19 | DONE | Added step heartbeat instrumentation in `run_full_pipeline()` (`[pipeline][HEARTBEAT]`) to emit progress every N seconds during long steps (`fetch`, `eda`, `train_cv`, `forecast`, `interpretability`). |
 | 2026-02-19 | DONE | Added runtime controls in `run_hourly`: `RENEWABLE_ENABLE_INTERPRETABILITY` and `PIPELINE_HEARTBEAT_SECONDS`; surfaced both in `run_log.json` config for traceability. |
 | 2026-02-19 | DONE | Hourly workflow now sets `RENEWABLE_ENABLE_INTERPRETABILITY=false` and `PIPELINE_HEARTBEAT_SECONDS=60` so CI prioritizes forecast pipeline within time budget while keeping live progress logs. |
+| 2026-02-24 | DONE | Reconfirmed cancel root cause from run `renewable-hourly #814`: workflow has `timeout-minutes: 25`; run was killed at 25m 15s during `Step 5 train_cv` (`Error: The operation was canceled.`). |
+| 2026-02-24 | DONE | Raised workflow budget to `timeout-minutes: 55` (still below hourly cadence) and enabled `RENEWABLE_CV_PROFILE_MODELS=true` to expose per-model CV timings in logs. |
+| 2026-02-24 | DONE | Added CV diagnostics to pipeline output: mode, model list, total CV seconds, per-model seconds, and CV row count now persisted in `pipeline_results.train_cv_diagnostics`. |
 
 ### Negative Values (CALI_SUN)
 
@@ -58,13 +61,16 @@ One-to-two liners per entry. Organised by section/topic.
 | 2026-02-16 | OK | Best model: AutoTheta (RMSE 3745). CV uses 2 windows, step=168h. 5 models × 6 series fit within ~5-8 min typically. |
 | PENDING | - | If CV becomes a bottleneck, consider reducing model set or setting `RENEWABLE_CV_WINDOWS: "1"` temporarily. |
 | 2026-02-19 | WATCH | Local profiling showed `train_cv` can run for many minutes with high CPU and sparse logs; heartbeat now makes this visible during CI execution. |
+| 2026-02-24 | DONE | Fixed CV output bug: `reset_index()` introduced a fake `index` pseudo-model in leaderboard; now uses `reset_index(drop=True)` and excludes `index` from model columns. |
+| 2026-02-24 | IN-PROGRESS | CV can run in per-model profile mode (`RENEWABLE_CV_PROFILE_MODELS=true`) with explicit `[CV][MODEL] start/done` timings to isolate slow model behavior over time. |
 
 ---
 
 ## Pending / To Do
 
-- [ ] Observe next scheduled CI run — confirm step timings appear in Actions log and total < 20 min.
+- [ ] Observe next scheduled CI run — confirm `train_cv` per-model timings appear and job completes inside new 55m budget.
 - [ ] If interpretability at 48 lags still slow: tune `shap_max_samples` or `n_estimators`.
 - [ ] Consider `SKIP_EDA: "true"` in workflow (EDA adds plot generation overhead; recommendations are stable).
-- [ ] Investigate whether `concurrency: cancel-in-progress: true` could cancel a valid long run if a manual dispatch overlaps.
+- [ ] If runs ever exceed 60m, decide whether to keep `cancel-in-progress: true` (freshest-only) or switch to queued runs.
 - [ ] After next successful run, verify `run_log.json` includes `config.enable_interpretability` and `config.heartbeat_seconds` for auditability.
+- [ ] After next successful run, verify `run_log.json` includes `config.cv_profile_models`, `config.cv_model_allowlist`, and `pipeline_results.train_cv_diagnostics`.
